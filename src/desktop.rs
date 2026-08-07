@@ -166,16 +166,35 @@ pub fn get_webview_for_eval<R: Runtime>(app: &AppHandle<R>, label: &str) -> Opti
     None
 }
 
-/// Get the emit target label for multi-webview architecture.
-/// If the window label doesn't match a WebviewWindow, falls back to the
-/// configured `default_webview_label` from `PluginConfig`.
+/// Resolves the label an event should be emitted to.
+///
+/// ⚠ **Same rule as [`get_webview_for_eval`], and it was missing here.** This
+/// function substituted the configured fallback as soon as the label was not a
+/// `WebviewWindow` — without ever trying `get_webview` first. On an application whose
+/// tabs are child webviews, that silently retargets every event to ANOTHER page, and
+/// 18 call sites route through it (`execute_js`, the whole of `webview.rs`,
+/// `local_storage`, `navigate_webview`, `zoom`).
+///
+/// Found by review on 2026-08-07, in the same pass that fixed `get_webview_for_eval` —
+/// which had been corrected while this twin kept the defect, twenty lines under a
+/// doc-comment describing it. **Correcting one of two identical resolvers is how a
+/// fixed bug survives.**
+///
+/// ⭐ A label that names something real always wins. The fallback is a last resort for
+/// a label that resolves to nothing.
 pub fn get_emit_target<R: Runtime>(app: &AppHandle<R>, window_label: &str) -> String {
-    if app.get_webview_window(window_label).is_none() {
-        if let Some(config) = app.try_state::<WebviewFallbackConfig>() {
-            if let Some(fallback) = &config.label {
-                if app.get_webview(fallback).is_some() {
-                    return fallback.to_string();
-                }
+    if app.get_webview_window(window_label).is_some() {
+        return window_label.to_string();
+    }
+    // A child webview by that exact name — the tab case, which must be tried before
+    // any substitution.
+    if app.get_webview(window_label).is_some() {
+        return window_label.to_string();
+    }
+    if let Some(config) = app.try_state::<WebviewFallbackConfig>() {
+        if let Some(fallback) = &config.label {
+            if app.get_webview(fallback).is_some() {
+                return fallback.to_string();
             }
         }
     }

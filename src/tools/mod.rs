@@ -200,9 +200,55 @@ pub async fn handle_command<R: Runtime>(
 mod tests {
     use crate::shared::commands;
 
+    /// Command names must be unique — a duplicate would shadow a handler in the
+    /// dispatch `match`, silently.
+    ///
+    /// ⚠ **This test used to enumerate the commands BY HAND, and it rotted.** It listed
+    /// 26 names and asserted `seen.len() == 26`; by 2026-08-07 the catalogue held 40, so
+    /// it verified nothing about 35% of the surface while its own message asserted a
+    /// count that was false. It stayed green throughout — and `cargo check` without
+    /// `--tests` never even compiled it.
+    ///
+    /// ⭐ It now derives from [`commands::CATALOG`], the single source. A command added
+    /// without a catalogue entry is caught by `test_catalog_covers_every_constant`
+    /// below; one added to both is covered here automatically. **A test that needs
+    /// hand-updating to keep meaning something will eventually stop meaning something.**
     #[test]
-    fn test_command_constants_are_unique() {
-        let all_commands = [
+    fn test_catalog_names_are_unique() {
+        let mut seen = std::collections::HashSet::new();
+        for info in commands::CATALOG {
+            assert!(
+                seen.insert(info.name),
+                "Duplicate command name in CATALOG: {}",
+                info.name
+            );
+            assert!(!info.name.is_empty(), "A CATALOG entry has an empty name");
+            assert!(
+                !info.summary.is_empty(),
+                "Command {} has no summary — it is served by `list_commands` and read by agents",
+                info.name
+            );
+        }
+        assert!(
+            seen.len() >= 26,
+            "CATALOG shrank below its 2026-08-07 floor ({} entries) — a command was dropped",
+            seen.len()
+        );
+    }
+
+    /// Every command CONSTANT must have a catalogue entry.
+    ///
+    /// Rust cannot enumerate a module's constants, so this is the closest mechanical
+    /// check available: each constant is named once here, and a constant added without
+    /// a `CommandInfo` reddens. It is the gap the CATALOG doc-comment warns about —
+    /// "adding a `pub const` without a `CommandInfo` is the one mistake to watch for" —
+    /// now watched by something other than vigilance.
+    #[test]
+    fn test_catalog_covers_every_constant() {
+        let names: std::collections::HashSet<&str> =
+            commands::CATALOG.iter().map(|c| c.name).collect();
+
+        for constant in [
             commands::PING,
             commands::TAKE_SCREENSHOT,
             commands::GET_DOM,
@@ -229,16 +275,26 @@ mod tests {
             commands::MANAGE_WEBVIEW_STATE,
             commands::TYPE_INTO_FOCUSED,
             commands::RESTART_APP,
-        ];
-
-        let mut seen = std::collections::HashSet::new();
-        for cmd in &all_commands {
+            commands::INSPECT_EVAL,
+            commands::INSPECT_DOM,
+            commands::GET_CONSOLE,
+            commands::GET_NETWORK,
+            commands::GET_TIMINGS,
+            commands::GET_PAGE_SNAPSHOT,
+            commands::INSPECT_CLICK,
+            commands::INSPECT_FILL,
+            commands::INSPECT_PRESS,
+            commands::INSPECT_SCROLL,
+            commands::INSPECT_WAIT,
+            commands::INSPECT_MAP,
+            commands::CAPTURE_WEBVIEW,
+            commands::LIST_COMMANDS,
+        ] {
             assert!(
-                seen.insert(*cmd),
-                "Duplicate command constant: {}",
-                cmd
+                names.contains(constant),
+                "Command constant `{constant}` has no CATALOG entry — `list_commands` \
+                 would not announce it, and a caller cannot discover it."
             );
         }
-        assert_eq!(seen.len(), 26, "Expected 26 unique commands");
     }
 }
