@@ -3,12 +3,44 @@ use tauri::{AppHandle, Manager, Runtime};
 
 use crate::socket_server::SocketResponse;
 
-/// Handler for list_windows — enumerate all windows/webviews with metadata
+/// Enumerates windows AND webviews, with their metadata.
+///
+/// # Why `webviews` is a separate list, and why it is not optional
+///
+/// `webview_windows()` only sees windows that ARE a webview. An application built
+/// the other way — one window hosting several child webviews, which is how a
+/// tabbed shell is built — has none, so this command answered `{"windows": []}`
+/// on an app with four tabs open. Measured 2026-08-07 on oshun.
+///
+/// ⛔ That empty list is worse than an error: the caller reads "nothing is open"
+/// and stops looking. And the labels it fails to return are exactly what every
+/// other command needs as `window_label` — so the whole surface was unreachable
+/// for want of a name.
+///
+/// The two lists are kept apart rather than merged because they answer different
+/// questions: `windows` is about the OS (geometry, monitor, focus), `webviews` is
+/// about pages (label, URL). Merging them would force empty geometry onto every
+/// tab and read like missing data instead of an inapplicable one.
 pub async fn handle_list_windows<R: Runtime>(
     app: &AppHandle<R>,
     _payload: Value,
 ) -> Result<SocketResponse, crate::error::Error> {
     let mut windows = Vec::new();
+
+    // Every webview, child ones included. This is the list a caller needs to pick a
+    // `window_label` for `inspect_*`, `capture_webview` and the rest.
+    let webviews: Vec<Value> = app
+        .webviews()
+        .into_iter()
+        .map(|(label, webview)| {
+            serde_json::json!({
+                "label": label,
+                "url": webview.url().map(|u| u.to_string()).unwrap_or_default(),
+                // The window that hosts it — a tab and its shell share this.
+                "window": webview.window().label().to_string(),
+            })
+        })
+        .collect();
 
     for (label, ww) in app.webview_windows() {
         let url = ww.url().map(|u| u.to_string()).unwrap_or_default();
@@ -47,7 +79,7 @@ pub async fn handle_list_windows<R: Runtime>(
 
     Ok(SocketResponse {
         success: true,
-        data: Some(serde_json::json!({ "windows": windows })),
+        data: Some(serde_json::json!({ "windows": windows, "webviews": webviews })),
         error: None,
         id: None,
     })

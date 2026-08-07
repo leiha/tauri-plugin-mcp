@@ -5,12 +5,19 @@ Cargo.log
 
 # Tauri
 .tauri/
-mcp-server-ts/build/
+# mcp-server-ts/build/ is intentionally COMMITTED (vendored): the MCP server
+# consumed at runtime is this fork's build, pointed to by .mcp.json. Like dist-js
+# below, the compiled artifact must be present in the tree so a fresh clone works
+# without a build step. node_modules/ stays ignored (line below). Rebuild with
+# `pnpm --dir mcp-server-ts build` (tsc) after editing mcp-server-ts/src/.
 # dist-js/ is intentionally COMMITTED: this fork is consumed by ori/iwe apps via
 # a pnpm `link:` path dependency. pnpm does NOT run lifecycle scripts (prepare)
 # for linked local packages, so the compiled guest-js artifact must already be
 # present in the tree — otherwise a fresh clone would leave a dead link with no
 # dist-js to resolve. Rebuild with `pnpm build` after editing guest-js/.
+# Re-include the dist-js type declaration: the parent ori/.gitignore excludes
+# *.d.ts globally, but this vendored artifact must be tracked for type-checking.
+!dist-js/*.d.ts
 # TypeScript/JavaScript
 node_modules/
 package-lock.json

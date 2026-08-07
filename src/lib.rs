@@ -186,12 +186,44 @@ pub fn init_with_config<R: Runtime>(config: PluginConfig) -> TauriPlugin<R> {
     }
 
     Builder::new("tauri-mcp")
+        // ⭐ THE PROBE MUST RUN BEFORE THE PAGE'S OWN SCRIPT, and `on_page_load` is not
+        // early enough — measured 2026-08-07: injected there, the console buffer came
+        // back EMPTY and the network log missed both of the page's `fetch` calls. The
+        // timings showed why: the page fetched at 87ms and 97ms, the hooks landed at
+        // ~850ms. A console buffer installed after boot misses exactly the errors worth
+        // having.
+        //
+        // `js_init_script` runs "after the global object has been created, but before the
+        // HTML document has been parsed and before any other script included by the HTML
+        // document is run" — which is the only ordering that makes the capture complete.
+        //
+        // Main frame only, deliberately: sub-frames would each install their own probe
+        // and, on same-origin frames, race for the same reply cookies. `eval` targets the
+        // main frame anyway, so a sub-frame probe would collect what nothing can read.
+        .js_init_script(include_str!("probe.js"))
         .invoke_handler(tauri::generate_handler![
         // Server Commands
         ])
+        .on_webview_ready(|webview| {
+            relax_mixed_content(&webview);
+        })
         .on_page_load(|webview, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Started {
+                // Applied HERE as well as in `on_webview_ready`, and the redundancy is
+                // measured: a CHILD webview created by the application (a tab, a preview
+                // pane) does not go through the ready hook, so the setting never reached
+                // the only webviews that need it. This hook does fire for them — the probe
+                // catch-up injection below proves it. Idempotent: setting a GObject
+                // property twice costs nothing.
+                relax_mixed_content(&webview);
                 let _ = webview.eval(include_str!("listener_patch.js"));
+                // Catch-up injection for a webview that existed BEFORE the plugin was
+                // installed, and therefore never received the init script. It is late —
+                // the hooks will have missed whatever already ran — but a late probe
+                // still answers `inspect_dom` and `inspect_eval`, where no probe answers
+                // nothing at all. The script is idempotent (`if (window.__TMCP__) return`),
+                // so this never double-installs over the init-script path.
+                let _ = webview.eval(include_str!("probe.js"));
             }
         })
         .setup(move |app, api| {
@@ -205,4 +237,64 @@ pub fn init_with_config<R: Runtime>(config: PluginConfig) -> TauriPlugin<R> {
             Ok(())
         })
         .build()
+}
+
+/// Lets a page load http sub-resources when it was itself served over https.
+///
+/// # Why this exists — measured, not assumed
+///
+/// A development dashboard served over https by a reverse proxy, whose Vue bundle is
+/// served over plain http by a Vite dev server, renders in Chromium and does NOT render
+/// in WebKitGTK: the engine refuses the module as active mixed content. Proved
+/// 2026-08-07 by shooting the same URL with both engines seconds apart — Chromium showed
+/// the login form, the WebKitGTK webview showed the PHP shell with an unmounted app —
+/// and confirmed from inside the page: `fetch` of the module URL returned
+/// `TypeError: Load failed`, with no CSP anywhere on the page.
+///
+/// ⛔ Nothing reported it. The refusal emits no `console.error`, and a `<script>` that
+/// fails to load fires an `error` event only in the CAPTURE phase on `window` — which is
+/// why `probe.js` now listens there too. An inspection tool that cannot open a
+/// development dashboard misses its own target.
+///
+/// # Why it is a feature, off by default
+///
+/// This lowers a real security boundary. Only a development host should ask for it, and
+/// it should be asked for explicitly rather than inherited: a plugin that silently
+/// weakened mixed-content protection everywhere would be a worse defect than the one it
+/// fixes. Enable with:
+///
+/// ```toml
+/// tauri-plugin-mcp = { ..., features = ["insecure-content"] }
+/// ```
+///
+/// Without the feature this is a no-op — deliberately, so that the call site reads the
+/// same on every platform and every build.
+#[allow(unused_variables)]
+fn relax_mixed_content<R: Runtime>(webview: &tauri::Webview<R>) {
+    #[cfg(all(target_os = "linux", feature = "insecure-content", debug_assertions))]
+    {
+        let _ = webview.with_webview(|platform| {
+            use webkit2gtk::WebViewExt;
+            use webkit2gtk::glib::object::ObjectExt;
+
+            let inner = platform.inner();
+            let Some(settings) = WebViewExt::settings(&inner) else { return };
+
+            // ⚠ Set through the GENERIC GObject API, not a typed setter: the
+            // `webkit2gtk` bindings expose `connect_insecure_content_detected` but no
+            // `set_allow_*_insecure_content`, while WebKitGTK itself carries both
+            // properties. Going through `set_property` reaches them without waiting on
+            // the bindings — at the cost of losing compile-time checking, which is why
+            // each name is looked up first: `set_property` PANICS on an unknown
+            // property, and a panic inside a webview callback takes the app down.
+            for name in ["allow-running-of-insecure-content", "allow-display-of-insecure-content"] {
+                if settings.find_property(name).is_some() {
+                    settings.set_property(name, true);
+                    info!("[TAURI_MCP] {name} enabled (insecure-content, debug build)");
+                } else {
+                    warn!("[TAURI_MCP] {name} is absent from this WebKitGTK — not applied");
+                }
+            }
+        });
+    }
 }

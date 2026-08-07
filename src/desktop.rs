@@ -126,16 +126,36 @@ pub fn get_window_handle<R: Runtime>(app: &AppHandle<R>, label: &str) -> Option<
     None
 }
 
-/// Get a webview for JS execution and DOM access.
-/// Supports both architectures:
-/// - WebviewWindow: returns the webview directly
-/// - Multi-webview: falls back to the configured `default_webview_label`
+/// Resolves a label to a webview, for JS execution, DOM access and capture.
+///
+/// # Order, and why it changed
+///
+/// ⛔ The configured fallback used to sit BEFORE the direct webview lookup. On a
+/// multi-webview application that is a silent mis-targeting: a CHILD webview — a tab —
+/// is not a `WebviewWindow`, so the exact lookup misses it, and an armed fallback then
+/// answered with a DIFFERENT page before the direct lookup was ever reached. Every
+/// `inspect_*` command and `capture_webview` resolve through here, so the caller would
+/// have read another page's DOM, or received a perfectly valid PNG of the wrong screen,
+/// with `success: true` and nothing to notice.
+///
+/// Found by review on 2026-08-07, not by a failure: `default_webview_label` is `None`
+/// unless an app sets it, and the app that exercised this code had not. A defect that
+/// only appears once someone configures a convenience is exactly the kind that gets
+/// blamed on the caller.
+///
+/// ⭐ The rule now: **a label that names something real always wins.** The fallback is a
+/// last resort for a label that resolves to nothing — which is what a fallback is for.
 pub fn get_webview_for_eval<R: Runtime>(app: &AppHandle<R>, label: &str) -> Option<tauri::Webview<R>> {
-    // First try WebviewWindow with exact label (returns its inner webview)
+    // A window that IS a webview — the single-webview architecture.
     if let Some(ww) = app.get_webview_window(label) {
         return Some(ww.as_ref().clone());
     }
-    // Multi-webview architecture: use the configured fallback webview label
+    // A webview by that exact name, child ones included. This is the tab case, and it
+    // must be tried before any substitution.
+    if let Some(wv) = app.get_webview(label) {
+        return Some(wv);
+    }
+    // Nothing answers to that label: fall back to the app's configured default, if any.
     if let Some(config) = app.try_state::<WebviewFallbackConfig>() {
         if let Some(fallback) = &config.label {
             if let Some(wv) = app.get_webview(fallback) {
@@ -143,8 +163,7 @@ pub fn get_webview_for_eval<R: Runtime>(app: &AppHandle<R>, label: &str) -> Opti
             }
         }
     }
-    // Try direct webview lookup
-    app.get_webview(label)
+    None
 }
 
 /// Get the emit target label for multi-webview architecture.

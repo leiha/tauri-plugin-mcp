@@ -1,6 +1,30 @@
 import * as net from 'net';
 import * as os from 'os';
 import * as fs from 'fs';
+import * as path from 'path';
+
+/**
+ * Re-root a conventional socket path on the effective temp dir.
+ *
+ * The Rust plugin creates its socket via `temp_dir()`, which honors `$TMPDIR`
+ * (sandboxes set e.g. `/tmp/claude-1000`). `.mcp.json` injects a *portable*
+ * `/tmp/tauri-mcp-<name>.sock` (committed, env-agnostic) — but under a sandbox
+ * the real socket lives at `$TMPDIR/tauri-mcp-<name>.sock`, not `/tmp/...`.
+ *
+ * Keep only the basename of the configured path and re-root it on
+ * `process.env.TMPDIR || '/tmp'`, so the server looks where the plugin actually
+ * created the socket — WITHOUT changing the portable path that `.mcp.json`
+ * commits. Symmetric with `td_socket` in tools/tauri-debug/lib.sh
+ * (`${TMPDIR:-/tmp}/$(basename socket)`) and the Rust side honoring $TMPDIR
+ * (socket-path debug fix, 2026-06-01). Windows named pipes are untouched.
+ */
+function rerootOnTmpdir(socketPath: string): string {
+  if (os.platform() === 'win32') {
+    return socketPath;
+  }
+  const tmp = process.env.TMPDIR || '/tmp';
+  return path.join(tmp, path.basename(socketPath));
+}
 
 // Constants
 const SOCKET_FILENAME = 'tauri-mcp.sock';
@@ -53,6 +77,12 @@ export class TauriSocketClient {
     let connectionPath = this.config.path || DEFAULT_SOCKET_PATH;
     if (os.platform() === 'win32') {
       connectionPath = `\\\\.\\pipe\\tmp\\${SOCKET_FILENAME}`;
+    } else {
+      // Re-root the configured (portable /tmp) basename on $TMPDIR so we find
+      // the socket where the Rust plugin actually created it under a sandbox.
+      // The token path at resolveAuthToken() derives from this, so it's covered
+      // by the same re-rooting.
+      connectionPath = rerootOnTmpdir(connectionPath);
     }
     return connectionPath;
   }

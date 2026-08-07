@@ -4794,6 +4794,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "cairo-rs",
  "core-foundation 0.9.4",
  "core-graphics 0.22.3",
  "foreign-types-shared 0.1.1",
@@ -4808,6 +4809,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "uuid",
+ "webkit2gtk",
  "win-screenshot",
  "xcap",
 ]

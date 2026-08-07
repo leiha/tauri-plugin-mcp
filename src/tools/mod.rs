@@ -12,6 +12,7 @@ pub mod cookies;
 pub mod devtools;
 pub mod events;
 pub mod execute_js;
+pub mod inspect;
 pub mod list_windows;
 pub mod local_storage;
 pub mod mouse_movement;
@@ -48,6 +49,39 @@ pub use webview_state::handle_manage_webview_state;
 pub use window_manager::handle_manage_window;
 pub use zoom::handle_manage_zoom;
 pub use restart_app::handle_restart_app;
+pub use inspect::{
+    handle_get_console, handle_get_network, handle_get_page_snapshot, handle_get_timings,
+    handle_inspect_click, handle_inspect_dom, handle_inspect_eval, handle_inspect_fill,
+    handle_inspect_map, handle_inspect_press, handle_inspect_scroll, handle_inspect_wait,
+};
+pub use capture::handle_capture_webview;
+
+pub mod capture;
+
+/// Serves the command catalogue.
+///
+/// A caller that can ASK what exists never has to guess a name, and never has to
+/// discover by timing out that a command cannot reach the page it is looking at.
+/// Both happened on 2026-08-07 — see [`commands::CATALOG`].
+pub async fn handle_list_commands<R: Runtime>(
+    _app: &AppHandle<R>,
+    _payload: Value,
+) -> crate::Result<SocketResponse> {
+    Ok(SocketResponse {
+        success: true,
+        data: Some(serde_json::json!({
+            "commands": commands::CATALOG,
+            // Stated so a caller can tell an old build from a new one WITHOUT
+            // probing for a command name and reading `Unknown command` as "absent".
+            "pluginVersion": env!("CARGO_PKG_VERSION"),
+            "probeVersion": 2,
+            "note": "reachesForeignPages=false means the command needs `guest-js` in the page's \
+                     own bundle; on a page the app does not own it TIMES OUT.",
+        })),
+        error: None,
+        id: None,
+    })
+}
 
 /// Handle command routing for socket requests
 pub async fn handle_command<R: Runtime>(
@@ -98,6 +132,20 @@ pub async fn handle_command<R: Runtime>(
         commands::MANAGE_WEBVIEW_STATE => handle_manage_webview_state(app, payload).await,
         commands::TYPE_INTO_FOCUSED => handle_type_into_focused(app, payload).await,
         commands::RESTART_APP => handle_restart_app(app, payload).await,
+        commands::INSPECT_EVAL => handle_inspect_eval(app, payload).await,
+        commands::INSPECT_DOM => handle_inspect_dom(app, payload).await,
+        commands::GET_CONSOLE => handle_get_console(app, payload).await,
+        commands::GET_NETWORK => handle_get_network(app, payload).await,
+        commands::GET_TIMINGS => handle_get_timings(app, payload).await,
+        commands::GET_PAGE_SNAPSHOT => handle_get_page_snapshot(app, payload).await,
+        commands::INSPECT_CLICK => handle_inspect_click(app, payload).await,
+        commands::INSPECT_FILL => handle_inspect_fill(app, payload).await,
+        commands::INSPECT_PRESS => handle_inspect_press(app, payload).await,
+        commands::INSPECT_SCROLL => handle_inspect_scroll(app, payload).await,
+        commands::INSPECT_WAIT => handle_inspect_wait(app, payload).await,
+        commands::INSPECT_MAP => handle_inspect_map(app, payload).await,
+        commands::CAPTURE_WEBVIEW => handle_capture_webview(app, payload).await,
+        commands::LIST_COMMANDS => handle_list_commands(app, payload).await,
         _ => Ok(SocketResponse {
             success: false,
             data: None,

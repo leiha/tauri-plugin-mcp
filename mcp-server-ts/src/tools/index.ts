@@ -10,6 +10,7 @@ import { registerManageStorageTool } from "./manage_storage.js";
 import { registerManageWindowTool } from "./manage_window.js";
 import { registerWaitForTool } from "./wait_for.js";
 import { registerRestartAppTool } from "./restart_app.js";
+import { registerInspectPageTools } from "./inspect_page.js";
 import { socketClient } from "./client.js";
 
 // Re-export the socket client for direct use
@@ -28,6 +29,10 @@ export function registerAllTools(server: McpServer) {
   registerManageWindowTool(server);
   registerWaitForTool(server);
   registerRestartAppTool(server);
+  // Universal inspection — the tools that reach a page the app does not own.
+  // They reply through cookies rather than a Tauri event, so no guest binding and
+  // no capability is required on the page side.
+  registerInspectPageTools(server);
 }
 
 // Function to initialize socket connection (can be awaited before registering tools)

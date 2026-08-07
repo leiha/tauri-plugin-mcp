@@ -29,6 +29,19 @@ xcap = "0.9"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 xcap = "0.9"
+# Reached through `with_webview` to relax the mixed-content refusal in debug builds —
+# see `relax_mixed_content` in `src/lib.rs`. Version pinned to what wry already resolves,
+# so no second copy of the bindings enters the tree.
+webkit2gtk = "2.0"
+# Encodes the Cairo surface that `WebViewExt::snapshot` hands back — see
+# `tools/capture.rs`. It was ALREADY in the tree transitively (webkit2gtk depends on
+# it); declaring it here only makes it nameable, and the version tracks what
+# webkit2gtk 2.0.2 resolves (0.18.5). ⚠ A different major here would put a SECOND
+# copy of cairo in the tree, and the two `Surface` types would not be the same type —
+# a confusing mismatch error at a call site that looks correct.
+# The `png` feature is what provides `ImageSurface::write_to_png`; without it the
+# snapshot can be taken and not written.
+cairo-rs = { version = "0.18", features = ["png"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 win-screenshot = "4.0.5"
@@ -36,6 +49,9 @@ win-screenshot = "4.0.5"
 [features]
 default = []
 devtools = ["tauri/devtools"]
+# Lets a debug build load http sub-resources from an https page. OFF by default:
+# it lowers a real security boundary, and only a development host should ask for it.
+insecure-content = []
 
 [build-dependencies]
 tauri-plugin = { version = "2.5", features = ["build"] }
