@@ -465,7 +465,11 @@ pub async fn handle_inspect_wait<R: Runtime>(
 ///
 /// The foreign-page counterpart of `get_page_map`, which needs `guest-js` and so
 /// times out on exactly the pages worth mapping. The answer states `total`,
-/// `returned` and `truncated`, so a capped map is never read as a complete one.
+/// `returned`, `truncatedByLimit` and `skippedInvisible`, so a capped map is never
+/// read as a complete one — and the caller knows WHICH cause dropped what, since
+/// raising the limit fixes one and only `visibleOnly: false` fixes the other.
+/// Every element carries `accessibleNameSelector` plus the number of elements it
+/// matches, so a selector that reaches nothing is visible instead of silent.
 pub async fn handle_inspect_map<R: Runtime>(
     app: &AppHandle<R>,
     payload: Value,

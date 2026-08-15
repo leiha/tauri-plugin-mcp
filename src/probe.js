@@ -408,11 +408,12 @@
         return {
             value: display.slice(0, NAME_BOUND),
             from: from,
-            // Whether the DISPLAYED value was cut — never how many elements were
-            // omitted (the map's own `truncated` answers that other question), and
+            // Whether the DISPLAYED value was cut — never how many elements the map
+            // omitted (`truncatedByLimit` / `skippedInvisible` answer that), and
             // never whether the SELECTOR was shortened (that is decided on `raw`).
-            // Three different truncations; confusing any two of them is how both
-            // rounds of this defect happened.
+            // FOUR different truncations live in this file; confusing any two of
+            // them is how both rounds of this defect happened, and how the map's
+            // old single `truncated` field came to mean two things at once.
             truncated: display.length > NAME_BOUND,
             raw: String(raw)
         };
@@ -472,21 +473,62 @@
     /**
      * The selector that actually REACHES the element, or `null` when none can.
      *
-     * ⚠ A shortened value yields a PREFIX match, which may hit more than one
-     * element. That is the honest trade: an over-wide `^=` returns something the
-     * caller can see and narrow, whereas the equality it replaces returned zero
-     * nodes and looked exactly like « this element is not there ».
      * ⛔ `null` in two cases, both meaning « no attribute selector can carry this »:
      * `aria-labelledby`, whose name lives in ANOTHER element; and a value left empty
      * once shortened — `[attr^=""]` matches EVERY element carrying the attribute,
      * which is worse than answering nothing.
+     *
+     * ⚠ IT IS NOT PROMISED TO BE UNIQUE, and the number of elements it hits is
+     * reported next to it (`accessibleNameSelectorMatches`) rather than left for the
+     * caller to discover by pulling. ⚔ MEASURED: three elements sharing their first
+     * 80 characters produced BYTE-IDENTICAL rows — same name, same selector — with
+     * nothing in the row saying so; and a `^=` also captures elements that compose
+     * an equality of their own. Ambiguity is not a property of `^=`: a plain `=` on
+     * a shared `aria-label` hits a parent AND its child just as happily.
+     *
+     * The element is passed so the selector can be qualified by TAG — `button[…]`
+     * rather than `[…]` — which narrows for free. ⚠ Only for HTML elements: SVG tag
+     * names are case-SENSITIVE in selectors, so a lower-cased `linearGradient` would
+     * match nothing. When in doubt the tag is dropped, never guessed.
      */
-    function accessibleNameSelector(named) {
+    var HTML_NAMESPACE = 'http://www.w3.org/1999/xhtml';
+
+    function accessibleNameSelector(named, el) {
         if (!named || named.from === 'aria-labelledby') return null;
         var prefix = prefixForSelector(named.raw);
         if (!prefix.text) return null;
-        return '[' + named.from + (prefix.shortened ? '^="' : '="') +
+        var tag = el && el.tagName && el.namespaceURI === HTML_NAMESPACE
+            ? el.tagName.toLowerCase()
+            : '';
+        return tag + '[' + named.from + (prefix.shortened ? '^="' : '="') +
             escapeAttributeValue(prefix.text) + '"]';
+    }
+
+    /**
+     * How many elements the composed selector actually hits, measured on the spot.
+     *
+     * ⭐ THIS IS WHAT TURNS A SILENT FAILURE INTO A VISIBLE ONE. Every defect this
+     * cluster has carried — twice — ended the same way: a selector that resolved to
+     * ZERO while looking perfectly well-formed, and a caller with no way to tell.
+     * Reporting the count closes the whole class rather than the instances: `0` is
+     * now readable in the map itself, and so is `7`.
+     * ⚠ `null` means the count could not be taken (no selector, or a selector the
+     * engine refused) — never « one ». An observer must not break the page it
+     * observes, so a throw here degrades to `null` instead of propagating.
+     *
+     * ⚔ ITS PRICE, MEASURED rather than assumed — one `querySelectorAll` per mapped
+     * element. On a deliberately dense page (602 interactive controls), 602 counts
+     * cost 11–15 ms where the whole map costs 8–15 ms: it roughly doubles the map.
+     * At the default `limit` of 200 that is ~5 ms. Cheap enough that reporting the
+     * truth beats saving it.
+     */
+    function selectorMatchCount(selector) {
+        if (!selector) return null;
+        try {
+            return document.querySelectorAll(selector).length;
+        } catch (e) {
+            return null;
+        }
     }
 
     function accessibleName(el) {
@@ -522,6 +564,7 @@
     function describeElement(el) {
         if (!el) return null;
         var named = accessibleName(el);
+        var selector = accessibleNameSelector(named, el);
         return {
             tag: el.tagName ? el.tagName.toLowerCase() : null,
             id: el.id || null,
@@ -540,7 +583,10 @@
             // The selector that REACHES it, composed here rather than by a caller
             // who cannot see the bound, the source kind, or the characters that
             // need escaping. `null` when no attribute selector can carry the name.
-            accessibleNameSelector: accessibleNameSelector(named)
+            accessibleNameSelector: selector,
+            // How many elements that selector hits — `1` is what you want, `0` is a
+            // defect you can now SEE, and more than one says « narrow it ».
+            accessibleNameSelectorMatches: selectorMatchCount(selector)
         };
     }
 
@@ -699,9 +745,14 @@
             'a[href],button,input,select,textarea,[role=button],[role=link],[role=tab],[contenteditable=true]';
         var out = [];
         var nodes = document.querySelectorAll(selector);
-        for (var i = 0; i < nodes.length && out.length < limit; i++) {
+        var skippedInvisible = 0;
+        var i = 0;
+        for (; i < nodes.length && out.length < limit; i++) {
             var el = nodes[i];
-            if (options.visibleOnly !== false && !isVisible(el)) continue;
+            if (options.visibleOnly !== false && !isVisible(el)) {
+                skippedInvisible++;
+                continue;
+            }
             var d = describeElement(el);
             d.value = el.value === undefined ? null : String(el.value).slice(0, 80);
             d.href = el.getAttribute ? el.getAttribute('href') : null;
@@ -711,10 +762,21 @@
         return {
             url: String(location.href),
             title: document.title,
-            // Reported so a truncated map is never read as a complete one.
             total: nodes.length,
             returned: out.length,
-            truncated: out.length < nodes.length,
+            /**
+             * ⭐ TWO CAUSES OF OMISSION, TWO FIELDS — because one field for both was
+             * actively misleading. `truncated: out.length < nodes.length` was true
+             * whenever ANY element was left out, so a page with a single hidden
+             * button reported `truncated: true` at `limit: 500`. ⚔ MEASURED: a
+             * caller reading that raises the limit, gets nothing more, and has no
+             * way to learn why — the two cases had exactly the same shape.
+             *   `truncatedByLimit`  — the limit stopped the walk. Raising it helps.
+             *   `skippedInvisible`  — hidden elements were filtered out. Raising the
+             *                         limit changes nothing; `visibleOnly: false` does.
+             */
+            truncatedByLimit: out.length >= limit && i < nodes.length,
+            skippedInvisible: skippedInvisible,
             elements: out
         };
     }

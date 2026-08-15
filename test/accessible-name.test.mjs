@@ -77,10 +77,13 @@ function liftNaming() {
   assert.notEqual(selectorBound, null, '`SELECTOR_BOUND` is gone from probe.js');
   const controls = text.match(/var CONTROL_CHARACTERS = .*;/);
   assert.notEqual(controls, null, '`CONTROL_CHARACTERS` is gone from probe.js');
+  const namespace = text.match(/var HTML_NAMESPACE = .*;/);
+  assert.notEqual(namespace, null, '`HTML_NAMESPACE` is gone from probe.js');
   const source = [
     `var NAME_BOUND = ${boundMatch[1]};`,
     `var SELECTOR_BOUND = ${selectorBound[1]};`,
     controls[0],
+    namespace[0],
     liftFunction(text, 'bounded'),
     liftFunction(text, 'escapeAttributeValue'),
     liftFunction(text, 'prefixForSelector'),
@@ -313,4 +316,33 @@ test('nothing composable yields null, never a selector matching everything', () 
   // A value entirely cut away would leave `[title^=""]`, which matches EVERY
   // element carrying the attribute — worse than answering nothing.
   assert.equal(selectorFor({ title: '\u0000leading nul' }), null);
+});
+
+/**
+ * ⭐ WHAT THE THIRD ROUND ADDED — the count, and why it matters more than the
+ * cases it closes.
+ *
+ * Both earlier rounds failed the same way: a selector resolving to ZERO while
+ * looking perfectly well-formed, with no way for a caller to tell. Reporting how
+ * many elements the selector hits closes the CLASS rather than the instances —
+ * `0` becomes readable in the map itself, and so does `7`.
+ *
+ * ⚠ `selectorMatchCount` needs a real `document`, so it is exercised in a live
+ * webview, not here. What is pinned here is the TAG qualification, which narrows
+ * the selector for free and must never be guessed on a non-HTML element.
+ */
+test('the selector is qualified by tag — but only when the tag is safe to lower-case', () => {
+  const { accessibleName, accessibleNameSelector } = liftNaming()(NO_DOCUMENT);
+  const named = accessibleName(element({ 'aria-label': 'Fermer' }));
+
+  const html = { tagName: 'BUTTON', namespaceURI: 'http://www.w3.org/1999/xhtml' };
+  assert.equal(accessibleNameSelector(named, html), 'button[aria-label="Fermer"]');
+
+  // ⛔ SVG tag names are case-SENSITIVE in selectors: lower-casing `linearGradient`
+  // would match nothing. The tag is dropped rather than guessed.
+  const svg = { tagName: 'linearGradient', namespaceURI: 'http://www.w3.org/2000/svg' };
+  assert.equal(accessibleNameSelector(named, svg), '[aria-label="Fermer"]');
+
+  // No element at all (the function is also called without one) stays valid.
+  assert.equal(accessibleNameSelector(named), '[aria-label="Fermer"]');
 });

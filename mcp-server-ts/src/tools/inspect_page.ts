@@ -208,8 +208,10 @@ export function registerInspectPageTools(server: McpServer) {
     "A compact map of what a page offers to interact with — links, buttons, inputs, selects, and " +
     "anything carrying an interactive role — with id, type, current value and disabled state. Use this " +
     "BEFORE clicking or filling, to find the right selector; inspect_dom on a real application is " +
-    "usually too large to reason about. States total/returned/truncated, so a capped map is never read " +
-    "as a complete one. Works on any page.",
+    "usually too large to reason about. States total/returned/truncatedByLimit/skippedInvisible, so a " +
+    "capped map is never read as a complete one and the caller knows which cause dropped what. Each " +
+    "element carries accessibleNameSelector (ready to use, never recompose it) and the number of " +
+    "elements it matches. Works on any page.",
     {
       window_label: WINDOW,
       options: z.object({
