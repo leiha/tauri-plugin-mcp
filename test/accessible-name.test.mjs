@@ -35,16 +35,15 @@ import { dirname, join } from 'node:path';
 const SOURCE = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'probe.js');
 
 /**
- * Lifts `accessibleName` out of the IIFE by brace matching.
+ * Lifts one named function out of the IIFE by brace matching.
  *
  * ⛔ Deliberately NOT a regex over the whole body: the function contains braces,
  * and a lazy match would cut it at the first `}` and then test a fragment that
  * happens to parse. Counting braces fails loudly instead.
  */
-function liftAccessibleName() {
-  const text = readFileSync(SOURCE, 'utf8');
-  const start = text.indexOf('function accessibleName(');
-  assert.notEqual(start, -1, '`accessibleName` is gone from probe.js — renamed, or removed');
+function liftFunction(text, name) {
+  const start = text.indexOf(`function ${name}(`);
+  assert.notEqual(start, -1, `\`${name}\` is gone from probe.js — renamed, or removed`);
   let depth = 0;
   let seenBrace = false;
   let end = -1;
@@ -60,9 +59,36 @@ function liftAccessibleName() {
       }
     }
   }
-  assert.notEqual(end, -1, 'unbalanced braces while lifting `accessibleName`');
-  const factory = new Function('document', `${text.slice(start, end)}; return accessibleName;`);
-  return factory;
+  assert.notEqual(end, -1, `unbalanced braces while lifting \`${name}\``);
+  return text.slice(start, end);
+}
+
+/**
+ * Lifts the whole naming cluster, because `accessibleName` no longer stands alone:
+ * it delegates the bound to `bounded`, and the selector is composed by
+ * `accessibleNameSelector`. Lifting only the entry point would fail with a
+ * `ReferenceError` that says nothing about what actually broke.
+ */
+function liftNaming() {
+  const text = readFileSync(SOURCE, 'utf8');
+  const boundMatch = text.match(/var NAME_BOUND = (\d+);/);
+  assert.notEqual(boundMatch, null, '`NAME_BOUND` is gone from probe.js');
+  const source = [
+    `var NAME_BOUND = ${boundMatch[1]};`,
+    liftFunction(text, 'bounded'),
+    liftFunction(text, 'escapeAttributeValue'),
+    liftFunction(text, 'accessibleNameSelector'),
+    liftFunction(text, 'accessibleName'),
+  ].join('\n');
+  return new Function(
+    'document',
+    `${source}; return { accessibleName: accessibleName, accessibleNameSelector: accessibleNameSelector, NAME_BOUND: NAME_BOUND };`,
+  );
+}
+
+/** Kept so the existing tests read unchanged where the change does not concern them. */
+function liftAccessibleName() {
+  return (document) => liftNaming()(document).accessibleName;
 }
 
 /** The smallest element this function actually needs: `getAttribute`, nothing else. */
@@ -86,6 +112,7 @@ test('every source is reported by name, never inferred by the caller', () => {
     assert.deepEqual(accessibleName(element({ [attribute]: 'a name' })), {
       value: 'a name',
       from: attribute,
+      truncated: false,
     });
   }
 });
@@ -101,7 +128,11 @@ test('the W3C order holds, and it is what makes a composed selector correct', ()
     placeholder: 'the placeholder',
     title: 'the title',
   });
-  assert.deepEqual(accessibleName(all), { value: 'the name', from: 'aria-label' });
+  assert.deepEqual(accessibleName(all), {
+    value: 'the name',
+    from: 'aria-label',
+    truncated: false,
+  });
   assert.equal(accessibleName(element({ alt: 'x', placeholder: 'y', title: 'z' })).from, 'alt');
   assert.equal(accessibleName(element({ placeholder: 'y', title: 'z' })).from, 'placeholder');
   assert.equal(accessibleName(element({ title: 'z' })).from, 'title');
@@ -115,12 +146,14 @@ test('aria-labelledby wins, and says so — because it is the one that cannot co
   assert.deepEqual(accessibleName(element({ 'aria-labelledby': 'lbl', 'aria-label': 'ignored' })), {
     value: 'from elsewhere',
     from: 'aria-labelledby',
+    truncated: false,
   });
   // An id list that resolves to nothing must FALL BACK, not report an empty name:
   // a blank `value` would read as "this element has no name" and hide the label.
   assert.deepEqual(accessibleName(element({ 'aria-labelledby': 'absent', 'aria-label': 'used' })), {
     value: 'used',
     from: 'aria-label',
+    truncated: false,
   });
 });
 
@@ -129,6 +162,62 @@ test('a name is trimmed, collapsed and bounded — it is a handle, not a payload
   assert.equal(accessibleName(element({ 'aria-label': '  spaced \n  out  ' })).value, 'spaced out');
   // Whitespace only is not a name.
   assert.equal(accessibleName(element({ 'aria-label': '   ' })), null);
-  const long = accessibleName(element({ 'aria-label': 'x'.repeat(200) })).value;
-  assert.equal(long.length, 80, 'the 80-char bound is what keeps a map readable');
+  const long = accessibleName(element({ 'aria-label': 'x'.repeat(200) }));
+  assert.equal(long.value.length, 80, 'the 80-char bound is what keeps a map readable');
+  // ⭐ The bound is allowed to stay ONLY because it is now reported. An unreported
+  // cut is what produced a selector resolving to zero nodes.
+  assert.equal(long.truncated, true);
+  assert.equal(accessibleName(element({ 'aria-label': 'x'.repeat(80) })).truncated, false);
+});
+
+/**
+ * WHAT THE SELECTOR TESTS PIN, AND WHAT THEY CANNOT.
+ *
+ * They pin the FORM of the composed selector — the operator, the escaping, the null.
+ * They do NOT prove it RESOLVES: there is no DOM here, and a string that looks like
+ * a selector is exactly the false green this whole defect was made of. The
+ * resolution proof is made against the running app, where the same three cases are
+ * replayed through `document.querySelectorAll`.
+ */
+test('a whole name composes an exact selector', () => {
+  const { accessibleName, accessibleNameSelector } = liftNaming()(NO_DOCUMENT);
+  const named = accessibleName(element({ 'aria-label': 'Réglages (Ctrl+,)' }));
+  assert.equal(accessibleNameSelector(named), '[aria-label="Réglages (Ctrl+,)"]');
+  assert.equal(accessibleNameSelector(null), null);
+});
+
+test('a CUT name composes a PREFIX match, never a truncated equality', () => {
+  const { accessibleName, accessibleNameSelector } = liftNaming()(NO_DOCUMENT);
+  const named = accessibleName(element({ title: 'y'.repeat(200) }));
+  const selector = accessibleNameSelector(named);
+  // The defect, stated as an assertion: `=` on a cut value asks the page for a
+  // string no element carries, and answers zero nodes with no error.
+  assert.ok(selector.startsWith('[title^="'), 'a cut value must compose a PREFIX match');
+  assert.equal(selector, `[title^="${'y'.repeat(80)}"]`);
+  // And the whole name still composes an equality match — the operator tracks the
+  // cut, it is not simply widened everywhere.
+  const whole = accessibleName(element({ title: 'short' }));
+  assert.equal(accessibleNameSelector(whole), '[title="short"]');
+});
+
+test('aria-labelledby composes NOTHING, and that is the honest answer', () => {
+  const document = { getElementById: () => ({ textContent: 'label held elsewhere' }) };
+  const { accessibleName, accessibleNameSelector } = liftNaming()(document);
+  const named = accessibleName(element({ 'aria-labelledby': 'lbl' }));
+  // The name is still reported — it is what the element IS. Only the selector is
+  // withheld, because no attribute selector over THIS element can carry it.
+  assert.equal(named.value, 'label held elsewhere');
+  assert.equal(accessibleNameSelector(named), null);
+});
+
+test('quotes and backslashes are escaped — they made querySelector THROW', () => {
+  const { accessibleName, accessibleNameSelector } = liftNaming()(NO_DOCUMENT);
+  const named = accessibleName(element({ title: 'dit "bonjour" \\ ok' }));
+  assert.equal(accessibleNameSelector(named), '[title="dit \\"bonjour\\" \\\\ ok"]');
+  // Every quote inside the value must be preceded by a backslash — otherwise the
+  // string closes early and the selector is a SyntaxError, not a miss.
+  const body = accessibleNameSelector(named).slice('[title="'.length, -2);
+  for (let i = 0; i < body.length; i++) {
+    if (body[i] === '"') assert.equal(body[i - 1], '\\', 'an unescaped quote closes the string');
+  }
 });

@@ -343,11 +343,26 @@
      * has to GUESS which of four attributes carries it; guessing `placeholder`
      * missed, because the name came from `aria-label` while the placeholder held
      * something else entirely. Reporting a name without its source is a handle that
-     * cannot be turned. Hence `from`: the caller composes `[<from>="<value>"]` and
-     * nothing is inferred.
-     * ⛔ The one case that does NOT compose is `aria-labelledby` — the name lives in
-     * ANOTHER element. `from` says so plainly instead of handing back a selector
-     * that would not resolve.
+     * cannot be turned. Hence `from`, which names the attribute.
+     *
+     * ⛔ AND HANDING BACK INGREDIENTS WAS ITSELF THE DEFECT — found 2026-08-16 by
+     * falsification, one day after the above shipped. The caller was told to compose
+     * `[<from>="<value>"]` by hand, and THREE separate things break that composition
+     * while looking perfectly fine on the way out:
+     *   ① the value is bounded to 80 characters (see `bounded`), so a long `title`
+     *     yields `[title="<first 80 chars>"]`, which resolves to ZERO nodes —
+     *     measured on a real element. A miss, with no error, from the one gesture
+     *     the how-to teaches.
+     *   ② `aria-labelledby` reports the TEXT of another element, never its id, so
+     *     no attribute selector over THIS element can ever carry it.
+     *   ③ a value holding `"` or `\` — ordinary in a French `title` — closes the
+     *     quoted string early and makes `querySelector` THROW a SyntaxError.
+     * None of the three is detectable by the caller, who sees a plausible name and a
+     * plausible attribute. So the probe stops handing out ingredients: it knows the
+     * full value, the source and the bound, and it composes the selector ITSELF, in
+     * `accessibleNameSelector`. The caller reads `accessibleName` to KNOW what the
+     * element is, and uses `accessibleNameSelector` to REACH it — legibility and
+     * exactness in two fields rather than one field failing at both.
      *
      * ⚠ THIS IS THE W3C ORDER, NOT THE WHOLE ALGORITHM. accname resolves
      * `aria-labelledby` > `aria-label` > native labelling > `title`, and that order
@@ -356,6 +371,55 @@
      * here rather than discovered — a null answer does not prove the element has no
      * accessible name, only that these four attributes are empty.
      */
+    /**
+     * The bound that keeps a 200-element map readable. It is a real constraint —
+     * a page of long `title` attributes would otherwise dwarf everything else in
+     * the answer — which is why the fix is not to remove it but to REPORT it:
+     * `truncated` is what turns `=` into `^=` downstream, and a prefix match is
+     * correct by construction where a truncated equality match is simply wrong.
+     */
+    var NAME_BOUND = 80;
+
+    function bounded(name, from) {
+        return {
+            value: name.slice(0, NAME_BOUND),
+            from: from,
+            // Whether the VALUE was cut — never how many elements were omitted.
+            // The map's own `truncated` field answers that other question, and
+            // confusing the two is what let this defect live.
+            truncated: name.length > NAME_BOUND
+        };
+    }
+
+    /**
+     * Escapes a value for use INSIDE the quotes of an attribute selector.
+     *
+     * ⛔ NOT `CSS.escape`, which escapes IDENTIFIERS: applied to a quoted string it
+     * escapes spaces and punctuation too, producing a selector that no longer
+     * matches the very value it came from. A quoted value needs exactly two
+     * characters handled — the backslash, and the quote that would close the string.
+     */
+    function escapeAttributeValue(value) {
+        return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    }
+
+    /**
+     * The selector that actually REACHES the element, or `null` when none can.
+     *
+     * ⚠ A truncated name yields a PREFIX match, which may hit more than one element.
+     * That is deliberate and it is the honest trade: an over-wide `^=` returns
+     * something the caller can see and narrow, whereas the truncated `=` it replaces
+     * returned zero nodes and looked exactly like « this element is not there ».
+     * ⛔ `null` for `aria-labelledby` is not a gap — no attribute selector over THIS
+     * element can carry a name that lives in ANOTHER one. `accessibleNameFrom` says
+     * which case it is, so a null is readable rather than mysterious.
+     */
+    function accessibleNameSelector(named) {
+        if (!named || named.from === 'aria-labelledby') return null;
+        return '[' + named.from + (named.truncated ? '^="' : '="') +
+            escapeAttributeValue(named.value) + '"]';
+    }
+
     function accessibleName(el) {
         if (!el || !el.getAttribute) return null;
         var by = el.getAttribute('aria-labelledby');
@@ -367,7 +431,7 @@
                 if (target) parts.push(target.innerText || target.textContent || '');
             }
             var joined = parts.join(' ').replace(/\s+/g, ' ').trim();
-            if (joined) return { value: joined.slice(0, 80), from: 'aria-labelledby' };
+            if (joined) return bounded(joined, 'aria-labelledby');
         }
         // W3C accname order, minus the native-label lookup this does not implement.
         var order = ['aria-label', 'alt', 'placeholder', 'title'];
@@ -375,7 +439,7 @@
             var raw = el.getAttribute(order[j]);
             if (!raw) continue;
             var cleaned = String(raw).replace(/\s+/g, ' ').trim();
-            if (cleaned) return { value: cleaned.slice(0, 80), from: order[j] };
+            if (cleaned) return bounded(cleaned, order[j]);
         }
         return null;
     }
@@ -396,8 +460,13 @@
             // two fields rather than a nested object, so it reads like every other
             // entry of this description and survives a shallow JSON dump.
             accessibleName: named ? named.value : null,
-            // Which attribute carries it — what makes `[from="value"]` composable.
-            accessibleNameFrom: named ? named.from : null
+            // Which attribute carries it — read to UNDERSTAND, and to read a null
+            // selector below (`aria-labelledby` is the case that cannot compose).
+            accessibleNameFrom: named ? named.from : null,
+            // The selector that REACHES it, composed here rather than by a caller
+            // who cannot see the bound, the source kind, or the characters that
+            // need escaping. `null` when no attribute selector can carry the name.
+            accessibleNameSelector: accessibleNameSelector(named)
         };
     }
 
