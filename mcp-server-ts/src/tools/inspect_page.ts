@@ -34,11 +34,40 @@ async function forward(
 ) {
   try {
     logCommandParams(command, params);
-    const result = await socketClient.sendCommand(command, params);
-    if (!result?.success) {
-      return createErrorResponse(result?.error || `${command} failed without a reason`);
-    }
-    const payload = result.data;
+    // 🔴 `sendCommand` RESOLVES THE UNWRAPPED PAYLOAD, NEVER THE ENVELOPE — and
+    // reading it as an envelope is the defect repaired here on 2026-08-08.
+    //
+    // `client.ts` inspects `{success, data, error}` itself: it REJECTS on
+    // `success: false` and resolves with `response.data` alone. So the value
+    // arriving here is already the answer — `2` for `inspect_eval('1+1')`, a DOM
+    // string for `inspect_dom`, an object for `inspect_click`.
+    //
+    // ⚔ This function used to test `result?.success` and read `result.data`.
+    // Neither exists on an unwrapped payload, so the guard was ALWAYS true and
+    // every call returned `<command> failed without a reason` — a message that
+    // names no cause because there was none. ⛔ **The whole `inspect_*` family, plus
+    // `get_console`, `get_network`, `get_page_snapshot`, `get_timings`, **plus
+    // `list_commands` and `capture_webview`** — FOURTEEN tools — had therefore NEVER
+    // worked over MCP**, since the commit that introduced them (`bda15a4`, the very
+    // commit that created this file: `git log -S` returns it alone).
+    // ⚔ THIS SAID "twelve" FOR AN HOUR, AND THE TWO IT MISSED ARE THE IRONIC ONES:
+    // `list_commands` is the remedy this project's own documentation prescribes
+    // ("ask the catalogue rather than guess"), and `capture_webview` is the only
+    // capture that reaches a CHILD webview. **Both remedies were themselves dead.**
+    // Recounted on `git show HEAD~1` — 14 distinct commands routed through
+    // `forward()`. ⚠ The commit message `13f8986` still says "twelve" and can no
+    // longer be amended; this cartouche is where the right number lives.
+    //
+    // The plugin itself was fine: the same commands answer
+    // correctly on the same socket through `oshun lightbox` (measured 2026-08-08,
+    // raw socket reply `{"success":true,"data":2,…}`).
+    //
+    // ⭐ THE WITNESS THAT MAKES THIS OPPOSABLE rather than a guess: `execute_js.ts`,
+    // in this same folder, calls the same `sendCommand` and passes its result
+    // STRAIGHT to `formatResultAsText`. Two neighbouring files, two readings of one
+    // contract — and the one that was wrong is the one nothing exercised.
+    // ⚠ A failure still arrives as a REJECTION, caught below with its real message.
+    const payload = await socketClient.sendCommand(command, params);
     const isEmpty = Array.isArray(payload) && payload.length === 0;
     return createSuccessResponse(
       isEmpty ? emptyHint : formatResultAsText(payload)
