@@ -28,6 +28,7 @@ const page = `<meta charset="utf-8">
 <h1>Rejeu de la fixture</h1>
 <div id="host"></div>
 <div id="parsed"></div>
+<div id="bounded"></div>
 <script id="fixture" type="application/json">${JSON.stringify(fixture)}</script>
 <script>
   var fixture = JSON.parse(document.getElementById('fixture').textContent);
@@ -63,8 +64,25 @@ const page = `<meta charset="utf-8">
 
   document.getElementById('parsed').innerHTML =
     fixture.parsedCases.map(function (c) { return c.html; }).join('');
+
+  // The bounded-field family: built element by element rather than from an HTML
+  // string, because these cases carry LEADING and TRAILING blanks that matter, and
+  // innerHTML would hand them to the parser instead of to the DOM property.
+  var boundedHost = document.getElementById('bounded');
+  (fixture.boundedFieldCases || []).forEach(function (c) {
+    var el = document.createElement(c.tag);
+    el.id = c.id;
+    Object.keys(c.attributes || {}).forEach(function (k) {
+      el.setAttribute(k, decode(c.attributes[k]));
+    });
+    if (c.text) el.textContent = decode(c.text);
+    boundedHost.appendChild(el);
+  });
 </script>
 `;
 
 writeFileSync(OUTPUT, page);
-console.log(`${OUTPUT}\n  written from the fixture alone: ${fixture.attributeCases.length + fixture.parsedCases.length + 1} elements`);
+const built =
+  fixture.attributeCases.length + fixture.parsedCases.length +
+  (fixture.boundedFieldCases || []).length + 1;
+console.log(`${OUTPUT}\n  written from the fixture alone: ${built} elements`);

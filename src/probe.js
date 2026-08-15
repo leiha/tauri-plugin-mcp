@@ -52,7 +52,7 @@
      * not a verdict.
      * ⚠ Maintained by `node test/fingerprint.mjs --write`; never edit by hand.
      */
-    var PROBE_FINGERPRINT = 'f5d14a5d5e75';
+    var PROBE_FINGERPRINT = 'ea429434b004';
 
     var consoleLog = [];
     var networkLog = [];
@@ -485,12 +485,59 @@
         return out;
     }
 
-    function bounded(raw, from) {
-        var display = String(raw).replace(/\s+/g, ' ').trim();
-        if (!display || !hasNameSubstance(display)) return null;
+    /**
+     * ⭐ ONE BOUNDING GESTURE, SHARED — because the map has THREE bounded text fields
+     * and only one of them ever admitted it.
+     *
+     * ⚔ MEASURED 2026-08-16 by independent falsification: filling a control with 200
+     * characters and re-reading the map yielded a `value` of length 80 with nothing
+     * saying it had been cut (`longtext_reported: 80 / longtext_real: 200`). The
+     * ordinary gesture — fill, re-read to check — therefore concludes « my input was
+     * truncated » about an input the DOM stored WHOLE. That false negative is
+     * invisible to its reader, which is the exact family of defect the accessible
+     * name cluster above was rewritten to remove.
+     *
+     * The omission was in three places at once, and it is one repair:
+     *   `text`           bounded to 80, no flag at all
+     *   `value`          bounded to 80, no flag at all
+     *   `accessibleName` `bounded()` DID compute the flag — and `describeElement`
+     *                    never emitted it, so no reader of a map could see it.
+     *
+     * ⛔ `length` IS THE LENGTH OF THE NORMALISED TEXT, never of the raw DOM value,
+     * and that is load-bearing. `length` exists so a reader can tell how much of the
+     * field is MISSING from `value`, and `value` is a prefix of the normalised form.
+     * Report the raw length instead and a merely re-spaced string ("  a   b  " →
+     * "a b") reads as truncated when nothing was cut — a new false positive traded
+     * for the false negative. Whitespace collapsing is a documented property of the
+     * field, not a per-element event.
+     *
+     * ⚠ THE BOUND IS NOT WIDENED, deliberately. No measurement justifies another
+     * number — inventing one is what got a length floor on selector prefixes killed
+     * on 2026-08-16 — the map must stay readable under the 64 KB transport ceiling,
+     * and a caller who needs the whole value has `inspect_eval`. What was missing
+     * was never room. It was the truth about the cut.
+     */
+    function boundedField(raw, normalise) {
+        var text = String(raw);
+        if (normalise) text = text.replace(/\s+/g, ' ').trim();
         return {
             // Sanitised: a lone surrogate here costs the WHOLE map, not this row.
-            value: sanitizeForTransport(display.slice(0, NAME_BOUND)),
+            value: sanitizeForTransport(text.slice(0, NAME_BOUND)),
+            length: text.length,
+            truncated: text.length > NAME_BOUND
+        };
+    }
+
+    function bounded(raw, from) {
+        var display = String(raw).replace(/\s+/g, ' ').trim();
+        // ⛔ Substance is judged on the NORMALISED-BUT-UNSANITISED text, never on
+        // `boundedField().value`: sanitising turns a lone surrogate into U+FFFD, which
+        // DOES have substance. Judging the sanitised form would resurrect the very
+        // false positive `hasNameSubstance` exists to prevent.
+        if (!display || !hasNameSubstance(display)) return null;
+        var field = boundedField(display, false);
+        return {
+            value: field.value,
             from: from,
             // Whether the DISPLAYED value was cut — never how many elements the map
             // omitted (`truncatedByLimit` / `skippedInvisible` answer that), and
@@ -510,7 +557,8 @@
             // node must not cost the whole map) but it is a NEW divergence between
             // the displayed name and the DOM, and it is where the next defect will
             // be paid. Flagged by the falsification hand rather than discovered.
-            truncated: display.length > NAME_BOUND,
+            truncated: field.truncated,
+            length: field.length,
             raw: String(raw)
         };
     }
@@ -708,19 +756,33 @@
         if (!el) return null;
         var named = accessibleName(el);
         var selector = accessibleNameSelector(named, el);
+        // Normalised, because the rendered text of a control already collapses its
+        // blanks — unlike `value`, which is a working payload and stays verbatim.
+        var textField = boundedField(el.innerText || el.textContent || '', true);
         return {
             tag: el.tagName ? el.tagName.toLowerCase() : null,
             id: el.id || null,
             name: el.getAttribute ? el.getAttribute('name') : null,
             type: el.getAttribute ? el.getAttribute('type') : null,
             classes: el.className && el.className.baseVal === undefined ? String(el.className) : null,
-            text: sanitizeForTransport(
-                (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80)),
+            text: textField.value,
+            // ⛔ How long the normalised text really is, and whether `text` above is a
+            // PREFIX of it. Without this pair a reader cannot distinguish « this
+            // control says exactly that » from « this control says 400 characters and
+            // you are looking at the first 80 ». See `boundedField`.
+            textLength: textField.length,
+            textTruncated: textField.truncated,
             // The last handle left when `id`, `name` and `text` are all empty — see
             // `accessibleName` for the measurement that put it here. Flattened into
             // two fields rather than a nested object, so it reads like every other
             // entry of this description and survives a shallow JSON dump.
             accessibleName: named ? named.value : null,
+            // ⛔ COMPUTED SINCE THE FIRST REPAIR, EMITTED ONLY NOW. `bounded()` has
+            // carried `truncated` all along and this description dropped it on the
+            // floor, so every map ever taken showed a possibly-cut name as if it were
+            // whole. A flag that never reaches its reader is not a flag.
+            accessibleNameLength: named ? named.length : null,
+            accessibleNameTruncated: named ? named.truncated : null,
             // Which attribute carries it — read to UNDERSTAND, and to read a null
             // selector below (`aria-labelledby` is the case that cannot compose).
             accessibleNameFrom: named ? named.from : null,
@@ -898,7 +960,13 @@
                 continue;
             }
             var d = describeElement(el);
-            d.value = el.value === undefined ? null : sanitizeForTransport(String(el.value).slice(0, 80));
+            // ⛔ NOT normalised — this is the working payload of a control, and the
+            // gesture that reads it back is « I just filled this, did it take? ».
+            // Collapsing its blanks would make a correct answer look wrong.
+            var valueField = el.value === undefined ? null : boundedField(el.value, false);
+            d.value = valueField ? valueField.value : null;
+            d.valueLength = valueField ? valueField.length : null;
+            d.valueTruncated = valueField ? valueField.truncated : null;
             d.href = el.getAttribute ? el.getAttribute('href') : null;
             d.disabled = !!el.disabled;
             out.push(d);

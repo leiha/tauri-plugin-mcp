@@ -85,21 +85,97 @@ const RESOLUTION = {
   zero: { test: (n) => n === 0, say: '0 matches (a defect, deliberately recorded)' },
 };
 
-function loadFixture() {
+function readFixture() {
   const here = dirname(fileURLToPath(import.meta.url));
-  const raw = readFileSync(join(here, 'fixtures', 'fixture-accessible-name.json'), 'utf8');
-  const fixture = JSON.parse(raw);
+  const fixture = JSON.parse(
+    readFileSync(join(here, 'fixtures', 'fixture-accessible-name.json'), 'utf8'));
+  const all = [
+    ...(fixture.attributeCases || []),
+    ...(fixture.wrapperCases || []),
+    ...(fixture.parsedCases || []),
+    ...(fixture.boundedFieldCases || []),
+  ];
+  for (const c of all) {
+    if (c.status === 'known-defect' && !c.shouldBe) {
+      throw new Error(`fixture case ${c.id} is a known-defect with no shouldBe — it would grave a bug as the contract`);
+    }
+  }
+  return fixture;
+}
+
+function loadFixture(fixture) {
   const cases = [
     ...(fixture.attributeCases || []),
     ...(fixture.wrapperCases || []),
     ...(fixture.parsedCases || []),
   ];
+  return new Map(cases.map((c) => [c.id, c]));
+}
+
+/**
+ * ⭐ THE SECOND CONTRACT THIS FILE JUDGES — and it exists because a flag can be
+ * CORRECT and never reach anyone.
+ *
+ * `bounded()` computed `truncated` from the first repair onward. `describeElement`
+ * never emitted it, `text` and `value` never had one, and the whole unit suite was
+ * green throughout: there is no fake DOM in which « the map does not carry this
+ * field » can be observed. ⚔ What it cost, measured 2026-08-16 by independent
+ * falsification: an input filled with 200 characters read back as 80 with nothing
+ * saying so, so the ordinary verification gesture — fill, re-read — concluded the
+ * input had been cut when the DOM held it whole.
+ *
+ * ⛔ ABSENT AND NULL ARE DIFFERENT ANSWERS, and this judge separates them by hand.
+ * `element.valueLength === undefined` means the probe does not emit the field at all
+ * — the defect itself; `null` means it emits it and the control genuinely has no
+ * value. A plain `!==` would conflate the two and report the emission defect as a
+ * mere wrong value, which is how it stayed invisible for a day.
+ */
+const BOUNDED_FIELD_OF = {
+  textEquals: 'text',
+  textLength: 'textLength',
+  textTruncated: 'textTruncated',
+  valueEquals: 'value',
+  valueLength: 'valueLength',
+  valueTruncated: 'valueTruncated',
+  accessibleNameLength: 'accessibleNameLength',
+  accessibleNameTruncated: 'accessibleNameTruncated',
+};
+
+function loadBoundedFieldCases(fixture) {
+  const cases = fixture.boundedFieldCases || [];
   for (const c of cases) {
-    if (c.status === 'known-defect' && !c.shouldBe) {
-      throw new Error(`fixture case ${c.id} is a known-defect with no shouldBe — it would grave a bug as the contract`);
+    for (const key of Object.keys(c.expect || {})) {
+      if (!BOUNDED_FIELD_OF[key]) {
+        throw new Error(`fixture case ${c.id} expects unknown key \`${key}\` — a silently ignored expectation is worse than none`);
+      }
     }
   }
   return new Map(cases.map((c) => [c.id, c]));
+}
+
+function judgeBoundedFields(map, cases) {
+  const failures = [];
+  for (const element of (map.elements || []).filter((e) => e.id)) {
+    const expected = cases.get(element.id);
+    if (!expected) continue;
+    for (const [key, want] of Object.entries(expected.expect || {})) {
+      const field = BOUNDED_FIELD_OF[key];
+      const fail = (got) => failures.push({
+        id: `${element.id} · ${field}`,
+        expected: JSON.stringify(want),
+        got,
+        selector: null,
+        why: expected.intent,
+        knownDefect: expected.status === 'known-defect' ? expected.shouldBe : null,
+      });
+      if (!Object.prototype.hasOwnProperty.call(element, field)) {
+        fail(`the map does not carry \`${field}\` AT ALL — an emission defect, not a wrong value`);
+        continue;
+      }
+      if (element[field] !== want) fail(JSON.stringify(element[field]));
+    }
+  }
+  return failures;
 }
 
 function loadMap(path) {
@@ -181,36 +257,75 @@ function judge(map, expectations) {
  * ⚠ The NEUTRAL mutant is the load-bearing one: without a mutation that must stay
  * GREEN, three reds prove only that the judge rejects everything.
  */
-function selfCheck(map, expectations) {
+function selfCheck(map, expectations, boundedCases) {
   const clone = () => JSON.parse(JSON.stringify(map));
   const mutate = (label, mustFail, fn) => {
     const mutant = clone();
-    fn(mutant);
-    const red = judge(mutant, expectations).length > 0;
+    const target = fn(mutant);
+    if (target === null) {
+      console.log(`  ❌ ${label.padEnd(38)} NO TARGET (the map carries no element this mutation can damage)`);
+      return false;
+    }
+    const red = judgeAll(mutant, expectations, boundedCases).length > 0;
     const ok = red === mustFail;
-    console.log(`  ${ok ? '✅' : '❌'} ${label.padEnd(34)} ${red ? 'RED  ' : 'GREEN'} (expected ${mustFail ? 'RED' : 'GREEN'})`);
+    console.log(`  ${ok ? '✅' : '❌'} ${label.padEnd(38)} ${red ? 'RED  ' : 'GREEN'} (expected ${mustFail ? 'RED' : 'GREEN'})`);
     return ok;
   };
+
+  // ⛔ Every mutation targets an element the relevant judge actually WATCHES. A
+  // mutation landing on an unwatched element stays green and reads as « the judge
+  // is blind » — and once the map grew a second family of cases, picking « the
+  // first element with one match » could land on one the selector judge ignores.
+  const watchedBySelector = (m) => m.elements.filter((e) => expectations.has(e.id));
+  const watchedByBounded = (m) => m.elements.filter((e) => boundedCases.has(e.id));
+  const pick = (list) => (list.length > 0 ? list[0] : null);
 
   console.log('self-check — the judge must go red on real damage, and stay green otherwise:\n');
   const results = [
     mutate('a selector reaching nothing', true, (m) => {
-      const target = m.elements.find((e) => e.accessibleNameSelectorMatches === 1);
-      target.accessibleNameSelectorMatches = 0;
+      const target = pick(watchedBySelector(m).filter((e) => e.accessibleNameSelectorMatches === 1));
+      if (target) target.accessibleNameSelectorMatches = 0;
+      return target;
     }),
     mutate('an ambiguity hidden (N -> 1)', true, (m) => {
-      const ambiguous = m.elements.find((e) => e.accessibleNameSelectorMatches > 1);
-      ambiguous.accessibleNameSelectorMatches = 1;
+      const target = pick(watchedBySelector(m).filter((e) => e.accessibleNameSelectorMatches > 1));
+      if (target) target.accessibleNameSelectorMatches = 1;
+      return target;
     }),
     mutate('a selector silently dropped', true, (m) => {
-      const target = m.elements.find((e) => e.accessibleNameSelectorMatches === 1);
-      target.accessibleNameSelector = null;
+      const target = pick(watchedBySelector(m).filter((e) => e.accessibleNameSelectorMatches === 1));
+      if (target) target.accessibleNameSelector = null;
+      return target;
+    }),
+    // ⭐ THE MUTATION THAT REPRODUCES THE DEFECT ITSELF: a cut that stops declaring
+    // itself. If this stays green, the repair is unfalsifiable and worth nothing.
+    mutate('a truncation flag flipped to false', true, (m) => {
+      const target = pick(watchedByBounded(m).filter((e) => e.textTruncated === true));
+      if (target) target.textTruncated = false;
+      return target;
+    }),
+    // ⭐ AND THE EXACT SHAPE THE DEFECT HAD — not a wrong value, an ABSENT field.
+    // No unit test can produce this state; only a real map can.
+    mutate('a length field not emitted at all', true, (m) => {
+      const target = pick(watchedByBounded(m).filter((e) => e.valueLength !== undefined));
+      if (target) delete target.valueLength;
+      return target;
+    }),
+    mutate('a length off by one', true, (m) => {
+      const target = pick(watchedByBounded(m).filter((e) => typeof e.textLength === 'number'));
+      if (target) target.textLength += 1;
+      return target;
     }),
     mutate('NEUTRAL — an unrelated field added', false, (m) => {
       for (const e of m.elements) e.unrelated = 'ignore me';
+      return m.elements[0] || null;
     }),
   ];
   return results.every(Boolean);
+}
+
+function judgeAll(map, expectations, boundedCases) {
+  return [...judge(map, expectations), ...judgeBoundedFields(map, boundedCases)];
 }
 
 function main() {
@@ -221,7 +336,9 @@ function main() {
     process.exit(2);
   }
   const map = loadMap(path);
-  const expectations = loadFixture();
+  const fixture = readFixture();
+  const expectations = loadFixture(fixture);
+  const boundedCases = loadBoundedFieldCases(fixture);
 
   const refusal = assertJudgeable(map);
   if (refusal) {
@@ -230,14 +347,22 @@ function main() {
   }
 
   if (process.argv.includes('--self-check')) {
-    const sound = selfCheck(map, expectations);
+    const sound = selfCheck(map, expectations, boundedCases);
     console.log(sound ? '\n✅ the judge can go red — its greens are worth reading' : '\n❌ the judge is NOT sound — do not trust any verdict it gives');
     process.exit(sound ? 0 : 1);
   }
 
-  const cases = (map.elements || []).filter((e) => e.id && expectations.has(e.id));
-  const failures = judge(map, expectations);
-  console.log(`${cases.length} fixture cases judged from ${path}  (probe ${map.probeFingerprint})`);
+  const seen = (map.elements || []).filter((e) => e.id);
+  const cases = seen.filter((e) => expectations.has(e.id));
+  const bounded = seen.filter((e) => boundedCases.has(e.id));
+  const failures = judgeAll(map, expectations, boundedCases);
+  console.log(`${cases.length} selector cases + ${bounded.length} bounded-field cases judged from ${path}  (probe ${map.probeFingerprint})`);
+  // ⛔ A family that reaches ZERO elements is a silent pass, and this fixture has
+  // been served from a stale generated page before. Name it rather than count it in.
+  if (bounded.length !== boundedCases.size) {
+    console.error(`⛔ ${boundedCases.size - bounded.length} bounded-field case(s) never appeared in the map — regenerate the page (node test/fixtures/fixture-to-page.mjs) and reopen it.`);
+    process.exit(2);
+  }
   if (cases.length === 0) {
     console.error('⛔ none of the map elements is a fixture case — wrong page?');
     process.exit(2);

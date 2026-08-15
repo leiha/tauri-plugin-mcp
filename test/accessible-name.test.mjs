@@ -88,6 +88,9 @@ function liftNaming() {
     liftFunction(text, 'isLowSurrogate'),
     liftFunction(text, 'hasNameSubstance'),
     liftFunction(text, 'sanitizeForTransport'),
+    // The shared bounding gesture `bounded` now delegates to — and which `text` and
+    // `value` use too. Lifted BEFORE `bounded`, which calls it.
+    liftFunction(text, 'boundedField'),
     liftFunction(text, 'bounded'),
     liftFunction(text, 'escapeAttributeValue'),
     liftFunction(text, 'composablePrefix'),
@@ -97,7 +100,7 @@ function liftNaming() {
   ].join('\n');
   return new Function(
     'document',
-    `${source}; return { accessibleName: accessibleName, accessibleNameSelector: accessibleNameSelector, NAME_BOUND: NAME_BOUND, SELECTOR_BOUND: SELECTOR_BOUND };`,
+    `${source}; return { accessibleName: accessibleName, accessibleNameSelector: accessibleNameSelector, boundedField: boundedField, NAME_BOUND: NAME_BOUND, SELECTOR_BOUND: SELECTOR_BOUND };`,
   );
 }
 
@@ -134,6 +137,7 @@ test('every source is reported by name, never inferred by the caller', () => {
       value: 'a name',
       from: attribute,
       truncated: false,
+      length: 6,
       raw: 'a name',
     });
   }
@@ -154,6 +158,7 @@ test('the W3C order holds, and it is what makes a composed selector correct', ()
     value: 'the name',
     from: 'aria-label',
     truncated: false,
+    length: 8,
     raw: 'the name',
   });
   assert.equal(accessibleName(element({ alt: 'x', placeholder: 'y', title: 'z' })).from, 'alt');
@@ -170,6 +175,7 @@ test('aria-labelledby wins, and says so — because it is the one that cannot co
     value: 'from elsewhere',
     from: 'aria-labelledby',
     truncated: false,
+    length: 14,
     raw: 'from elsewhere',
   });
   // An id list that resolves to nothing must FALL BACK, not report an empty name:
@@ -178,6 +184,7 @@ test('aria-labelledby wins, and says so — because it is the one that cannot co
     value: 'used',
     from: 'aria-label',
     truncated: false,
+    length: 4,
     raw: 'used',
   });
 });
@@ -193,6 +200,54 @@ test('a name is trimmed, collapsed and bounded — it is a handle, not a payload
   // cut is what produced a selector resolving to zero nodes.
   assert.equal(long.truncated, true);
   assert.equal(accessibleName(element({ 'aria-label': 'x'.repeat(80) })).truncated, false);
+});
+
+/**
+ * ⭐ THE SHARED BOUNDING GESTURE — and what these assertions can and cannot prove.
+ *
+ * They pin the ARITHMETIC of the cut: what `length` counts, when `truncated` flips,
+ * and that normalising is opt-in per field. They CANNOT prove the numbers reach a
+ * caller, and that distinction is the whole point of this repair: `bounded()` had
+ * computed `truncated` correctly since the first round, and `describeElement`
+ * dropped it on the floor. Every unit test here was green throughout. ⇒ The
+ * emission proof is in `test/live-check.mjs`, against a real map.
+ */
+test('the bound is reported, not merely applied — length counts the NORMALISED text', () => {
+  const { boundedField, NAME_BOUND } = liftNaming()(NO_DOCUMENT);
+
+  const short = boundedField('ok', true);
+  assert.deepEqual(short, { value: 'ok', length: 2, truncated: false });
+
+  // Exact AT the boundary, not merely near it: 80 is whole, 81 is cut.
+  assert.equal(boundedField('b'.repeat(NAME_BOUND), true).truncated, false);
+  assert.equal(boundedField('c'.repeat(NAME_BOUND + 1), true).truncated, true);
+
+  // ⚔ THE MEASURED CASE (2026-08-16): 200 characters in, 80 reported, and nothing
+  // said so. `length` is what tells the reader 120 are missing.
+  const long = boundedField('a'.repeat(200), true);
+  assert.equal(long.value.length, NAME_BOUND);
+  assert.equal(long.length, 200);
+  assert.equal(long.truncated, true);
+
+  // ⛔ `length` IS THE NORMALISED LENGTH. Were it the raw one, this case would
+  // report 18 for a 12-character display and read as a truncation that never
+  // happened — trading a false negative for a false positive.
+  assert.deepEqual(boundedField('  deux   espaces  ', true), {
+    value: 'deux espaces',
+    length: 12,
+    truncated: false,
+  });
+
+  // Normalising is per-field, and a control's VALUE keeps its blanks: it is a
+  // working payload, re-read to answer « did my input take? ».
+  assert.deepEqual(boundedField('  a   b  ', false), {
+    value: '  a   b  ',
+    length: 9,
+    truncated: false,
+  });
+
+  // An empty value is a value. Reporting it as absent is a different claim.
+  assert.deepEqual(boundedField('', false), { value: '', length: 0, truncated: false });
 });
 
 /**

@@ -854,5 +854,171 @@
    },
    "status": "contract"
   }
+ ],
+ "boundedFieldEncoding": "Same encoding as attributeCases for the INPUT fields (`text`, `attributes.*`): the inner of a JSON string, ASCII only, runs of 20+ identical characters folded as {{c*N}}. The `expect` block is deliberately NOT encoded \u2014 numbers, booleans and short literal ASCII strings only, so no decoder has to exist twice (once in the page, once in the Node judge). A case needing a long or invisible EXPECTED string asserts on its length instead. | 2026-08-17: family added with the repair of `textLength`/`valueLength`/`accessibleNameLength`. Unlike the selector families, these expectations are DERIVED from the contract and from a length the case itself chooses \u2014 they were written BEFORE being measured, then confronted. That is why they judge rather than mirror.",
+ "boundedFieldCases": [
+  {
+   "id": "f-text-plain",
+   "tag": "button",
+   "attributes": {},
+   "text": "ok",
+   "intent": "Baseline: nothing is cut and the flag must say so. A flag that is only ever true is not a flag.",
+   "expect": {
+    "textEquals": "ok",
+    "textLength": 2,
+    "textTruncated": false
+   },
+   "status": "contract"
+  },
+  {
+   "id": "f-text-at-bound",
+   "tag": "button",
+   "attributes": {},
+   "text": "{{b*80}}",
+   "intent": "Exactly at the 80-char bound: whole. Pinned AT the edge, not near it \u2014 an off-by-one here reports every complete 80-char text as cut, forever.",
+   "expect": {
+    "textLength": 80,
+    "textTruncated": false
+   },
+   "status": "contract"
+  },
+  {
+   "id": "f-text-over-bound",
+   "tag": "button",
+   "attributes": {},
+   "text": "{{c*81}}",
+   "intent": "One character past the bound: the smallest cut that exists. A flag that cannot see this one cannot see any.",
+   "expect": {
+    "textLength": 81,
+    "textTruncated": true
+   },
+   "status": "contract"
+  },
+  {
+   "id": "f-text-long",
+   "tag": "button",
+   "attributes": {},
+   "text": "{{a*200}}",
+   "intent": "The measured shape of the defect: 200 characters in, 80 out. Before this repair the map said 80 and NOTHING else, so its reader concluded the control held 80 characters.",
+   "expect": {
+    "textLength": 200,
+    "textTruncated": true
+   },
+   "status": "contract"
+  },
+  {
+   "id": "f-text-collapsed",
+   "tag": "button",
+   "attributes": {},
+   "text": "  deux   espaces  ",
+   "intent": "Blanks are collapsed and `textLength` counts the NORMALISED text (12), never the raw 18. Reporting 18 for a 12-char display would read as a truncation that never happened \u2014 a false positive traded for the false negative. The rendering engine collapses too, so both paths agree here; what is pinned is the NUMBER the reader gets.",
+   "expect": {
+    "textEquals": "deux espaces",
+    "textLength": 12,
+    "textTruncated": false
+   },
+   "status": "contract"
+  },
+  {
+   "id": "f-value-plain",
+   "tag": "input",
+   "attributes": {
+    "value": "abc"
+   },
+   "text": "",
+   "intent": "Baseline for a control's working payload.",
+   "expect": {
+    "valueEquals": "abc",
+    "valueLength": 3,
+    "valueTruncated": false
+   },
+   "status": "contract"
+  },
+  {
+   "id": "f-value-long",
+   "tag": "input",
+   "attributes": {
+    "value": "{{d*200}}"
+   },
+   "text": "",
+   "intent": "\u2694 THE CASE INDEPENDENT FALSIFICATION MEASURED: longtext_reported 80 / longtext_real 200. The gesture it breaks is `fill` then re-read to verify, which concluded the input had been cut while the DOM held it whole.",
+   "expect": {
+    "valueLength": 200,
+    "valueTruncated": true
+   },
+   "status": "contract"
+  },
+  {
+   "id": "f-value-spaces",
+   "tag": "input",
+   "attributes": {
+    "value": "  a   b  "
+   },
+   "text": "",
+   "intent": "\u26d4 THE DISCRIMINATING CASE: `value` is NOT normalised, unlike `text`. Collapsing a payload's blanks would make a correct fill look wrong \u2014 the same silent lie, arriving from the opposite side.",
+   "expect": {
+    "valueEquals": "  a   b  ",
+    "valueLength": 9,
+    "valueTruncated": false
+   },
+   "status": "contract"
+  },
+  {
+   "id": "f-value-empty",
+   "tag": "input",
+   "attributes": {
+    "value": ""
+   },
+   "text": "",
+   "intent": "An empty value is a value. Reporting it as null would claim the control has no value field at all \u2014 a different fact, acted on differently.",
+   "expect": {
+    "valueEquals": "",
+    "valueLength": 0,
+    "valueTruncated": false
+   },
+   "status": "contract"
+  },
+  {
+   "id": "f-value-absent",
+   "tag": "a",
+   "attributes": {
+    "href": "#f-value-absent"
+   },
+   "text": "lien sans value",
+   "intent": "An anchor has no `value` property at all. null must mean ABSENT, and stay distinct from the empty string above.",
+   "expect": {
+    "valueLength": null,
+    "valueTruncated": null
+   },
+   "status": "contract"
+  },
+  {
+   "id": "f-name-plain",
+   "tag": "button",
+   "attributes": {
+    "aria-label": "Panneau lateral (fixture bornage)"
+   },
+   "text": "f-name-plain",
+   "intent": "Baseline for the accessible name's own bound.",
+   "expect": {
+    "accessibleNameLength": 33,
+    "accessibleNameTruncated": false
+   },
+   "status": "contract"
+  },
+  {
+   "id": "f-name-long",
+   "tag": "button",
+   "attributes": {
+    "aria-label": "F{{e*199}}"
+   },
+   "text": "f-name-long",
+   "intent": "\u26d4 THE FLAG THAT EXISTED AND NEVER SHIPPED: `bounded()` has computed `truncated` since the first repair, and `describeElement` never emitted it. Every unit test stayed green while no map could ever show it. This case is the EMISSION proof \u2014 the one thing a unit suite structurally cannot make.",
+   "expect": {
+    "accessibleNameLength": 200,
+    "accessibleNameTruncated": true
+   },
+   "status": "contract"
+  }
  ]
 }
