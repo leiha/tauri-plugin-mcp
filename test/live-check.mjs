@@ -277,8 +277,38 @@ function selfCheck(map, expectations, boundedCases) {
   // is blind » — and once the map grew a second family of cases, picking « the
   // first element with one match » could land on one the selector judge ignores.
   const watchedBySelector = (m) => m.elements.filter((e) => expectations.has(e.id));
-  const watchedByBounded = (m) => m.elements.filter((e) => boundedCases.has(e.id));
   const pick = (list) => (list.length > 0 ? list[0] : null);
+
+  /**
+   * ⛔ WATCHED BY THE CASE IS NOT ENOUGH — IT MUST WATCH THE KEY BEING DAMAGED.
+   *
+   * ⚔ MEASURED 2026-08-17, by this very self-check, reported by an independent
+   * session: `a length field not emitted at all` deleted `valueLength` from the
+   * FIRST bounded case carrying it — `f-text-plain`, whose `expect` names only
+   * `text*`. The field was genuinely removed and genuinely unjudged, so the run
+   * came back GREEN and read as « the judge cannot see an absent field ». The
+   * judge could. The mutation had simply landed where nothing was watching.
+   *
+   * ⚠ Same family as a defect measured on 2026-08-15 on the neighbouring harness
+   * (four mutations reported as « does not bite » that had never been applied):
+   * A MUTATION THAT DOES NOT REACH WHAT IS JUDGED RETURNS A VERDICT ABOUT NOTHING.
+   * There, the mutation never ran; here it ran on a blind spot — and the second
+   * shape is the harder one, because the damage is real and visible in the diff.
+   *
+   * ⇒ Picking by key rather than by field makes the miss impossible to write,
+   * instead of correcting each mutation one at a time. A `null` return surfaces as
+   * NO TARGET, never as a pass.
+   */
+  const pickWatching = (m, expectKey, predicate = () => true) => {
+    const field = BOUNDED_FIELD_OF[expectKey];
+    return pick(m.elements.filter((e) => {
+      const c = boundedCases.get(e.id);
+      return c
+        && Object.prototype.hasOwnProperty.call(c.expect || {}, expectKey)
+        && Object.prototype.hasOwnProperty.call(e, field)
+        && predicate(e);
+    }));
+  };
 
   console.log('self-check — the judge must go red on real damage, and stay green otherwise:\n');
   const results = [
@@ -300,19 +330,19 @@ function selfCheck(map, expectations, boundedCases) {
     // ⭐ THE MUTATION THAT REPRODUCES THE DEFECT ITSELF: a cut that stops declaring
     // itself. If this stays green, the repair is unfalsifiable and worth nothing.
     mutate('a truncation flag flipped to false', true, (m) => {
-      const target = pick(watchedByBounded(m).filter((e) => e.textTruncated === true));
+      const target = pickWatching(m, 'textTruncated', (e) => e.textTruncated === true);
       if (target) target.textTruncated = false;
       return target;
     }),
     // ⭐ AND THE EXACT SHAPE THE DEFECT HAD — not a wrong value, an ABSENT field.
     // No unit test can produce this state; only a real map can.
     mutate('a length field not emitted at all', true, (m) => {
-      const target = pick(watchedByBounded(m).filter((e) => e.valueLength !== undefined));
+      const target = pickWatching(m, 'valueLength');
       if (target) delete target.valueLength;
       return target;
     }),
     mutate('a length off by one', true, (m) => {
-      const target = pick(watchedByBounded(m).filter((e) => typeof e.textLength === 'number'));
+      const target = pickWatching(m, 'textLength', (e) => typeof e.textLength === 'number');
       if (target) target.textLength += 1;
       return target;
     }),
