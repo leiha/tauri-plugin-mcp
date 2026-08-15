@@ -380,14 +380,41 @@
      */
     var NAME_BOUND = 80;
 
-    function bounded(name, from) {
+    /**
+     * ⭐ THE SELECTOR IS BUILT FROM THE RAW ATTRIBUTE, NEVER FROM THE DISPLAYED NAME
+     * — and getting that backwards was a SECOND instance of the very defect this
+     * cluster was rewritten to fix. Found 2026-08-16 by independent falsification,
+     * hours after the first fix shipped.
+     *
+     * The displayed name is normalised (`\s+` collapsed, trimmed) and bounded to 80,
+     * because a map has to stay readable. `querySelector`, however, compares against
+     * the attribute EXACTLY as the DOM holds it. Compose from the normalised value
+     * and any element whose attribute carries a blank the normalisation eats —
+     * a leading space, a double space, a newline, a tab, a NBSP, U+2028, U+FEFF —
+     * gets a selector resolving to ZERO nodes, silently. ⚔ MEASURED: a real element
+     * of ona (`AtelierTab.svelte`, a placeholder with double spaces around an em
+     * dash) yielded exactly that, today, through the gesture the how-to teaches.
+     *
+     * So there are two values, for two jobs, and they must not be confused:
+     *   `value` — normalised and bounded. To READ. Never to compose with.
+     *   `raw`   — the attribute verbatim. To COMPOSE with. Never rendered in the map,
+     *             which is why the 80-char bound costs the map nothing.
+     */
+    var SELECTOR_BOUND = 200;
+
+    function bounded(raw, from) {
+        var display = String(raw).replace(/\s+/g, ' ').trim();
+        if (!display) return null;
         return {
-            value: name.slice(0, NAME_BOUND),
+            value: display.slice(0, NAME_BOUND),
             from: from,
-            // Whether the VALUE was cut — never how many elements were omitted.
-            // The map's own `truncated` field answers that other question, and
-            // confusing the two is what let this defect live.
-            truncated: name.length > NAME_BOUND
+            // Whether the DISPLAYED value was cut — never how many elements were
+            // omitted (the map's own `truncated` answers that other question), and
+            // never whether the SELECTOR was shortened (that is decided on `raw`).
+            // Three different truncations; confusing any two of them is how both
+            // rounds of this defect happened.
+            truncated: display.length > NAME_BOUND,
+            raw: String(raw)
         };
     }
 
@@ -396,28 +423,70 @@
      *
      * ⛔ NOT `CSS.escape`, which escapes IDENTIFIERS: applied to a quoted string it
      * escapes spaces and punctuation too, producing a selector that no longer
-     * matches the very value it came from. A quoted value needs exactly two
-     * characters handled — the backslash, and the quote that would close the string.
+     * matches the very value it came from. A quoted value needs the backslash, the
+     * quote that would close the string — and the CONTROL characters, which a CSS
+     * string cannot carry literally: ⚔ MEASURED, a raw newline makes
+     * `querySelector` THROW a SyntaxError, and escaping it as `\a ` resolves.
      */
+    var CONTROL_CHARACTERS = new RegExp('[\\u0000-\\u001f\\u007f]', 'g');
+
     function escapeAttributeValue(value) {
-        return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        return String(value)
+            .replace(/\\/g, '\\\\')
+            .replace(/"/g, '\\"')
+            // Hex escape, closed by the space CSS requires to end the sequence.
+            .replace(CONTROL_CHARACTERS, function (character) {
+                return '\\' + character.charCodeAt(0).toString(16) + ' ';
+            });
+    }
+
+    /**
+     * How much of the raw value the selector can carry, and whether it had to stop.
+     *
+     * Two things force a stop, and both must yield a PREFIX rather than a wrong
+     * equality:
+     * ⛔ A NUL. ⚔ MEASURED: an attribute holding U+0000 matches NEITHER a selector
+     * carrying the NUL nor one carrying U+FFFD — the CSS preprocessor rewrites it,
+     * so equality is unreachable by construction. Cutting before it keeps the
+     * element reachable (measured: the prefix resolves).
+     * ⚠ A very long value, which would bloat the map. The cut must never split a
+     * SURROGATE PAIR: ⚔ MEASURED, a lone high surrogate at the edge makes the `^=`
+     * resolve to zero — the fix reproducing the failure it exists to prevent.
+     */
+    function prefixForSelector(raw) {
+        var nul = raw.indexOf('\u0000');
+        var text = nul === -1 ? raw : raw.slice(0, nul);
+        var shortened = nul !== -1;
+        if (text.length > SELECTOR_BOUND) {
+            text = text.slice(0, SELECTOR_BOUND);
+            shortened = true;
+        }
+        var last = text.charCodeAt(text.length - 1);
+        if (last >= 0xd800 && last <= 0xdbff) {
+            text = text.slice(0, text.length - 1);
+            shortened = true;
+        }
+        return { text: text, shortened: shortened };
     }
 
     /**
      * The selector that actually REACHES the element, or `null` when none can.
      *
-     * ⚠ A truncated name yields a PREFIX match, which may hit more than one element.
-     * That is deliberate and it is the honest trade: an over-wide `^=` returns
-     * something the caller can see and narrow, whereas the truncated `=` it replaces
-     * returned zero nodes and looked exactly like « this element is not there ».
-     * ⛔ `null` for `aria-labelledby` is not a gap — no attribute selector over THIS
-     * element can carry a name that lives in ANOTHER one. `accessibleNameFrom` says
-     * which case it is, so a null is readable rather than mysterious.
+     * ⚠ A shortened value yields a PREFIX match, which may hit more than one
+     * element. That is the honest trade: an over-wide `^=` returns something the
+     * caller can see and narrow, whereas the equality it replaces returned zero
+     * nodes and looked exactly like « this element is not there ».
+     * ⛔ `null` in two cases, both meaning « no attribute selector can carry this »:
+     * `aria-labelledby`, whose name lives in ANOTHER element; and a value left empty
+     * once shortened — `[attr^=""]` matches EVERY element carrying the attribute,
+     * which is worse than answering nothing.
      */
     function accessibleNameSelector(named) {
         if (!named || named.from === 'aria-labelledby') return null;
-        return '[' + named.from + (named.truncated ? '^="' : '="') +
-            escapeAttributeValue(named.value) + '"]';
+        var prefix = prefixForSelector(named.raw);
+        if (!prefix.text) return null;
+        return '[' + named.from + (prefix.shortened ? '^="' : '="') +
+            escapeAttributeValue(prefix.text) + '"]';
     }
 
     function accessibleName(el) {
@@ -430,16 +499,21 @@
                 var target = ids[i] ? document.getElementById(ids[i]) : null;
                 if (target) parts.push(target.innerText || target.textContent || '');
             }
-            var joined = parts.join(' ').replace(/\s+/g, ' ').trim();
-            if (joined) return bounded(joined, 'aria-labelledby');
+            // No raw form worth keeping: this name lives in ANOTHER element, so no
+            // selector over this one can carry it. `bounded` still normalises.
+            var joined = parts.join(' ');
+            var named = bounded(joined, 'aria-labelledby');
+            if (named) return named;
         }
         // W3C accname order, minus the native-label lookup this does not implement.
         var order = ['aria-label', 'alt', 'placeholder', 'title'];
         for (var j = 0; j < order.length; j++) {
             var raw = el.getAttribute(order[j]);
             if (!raw) continue;
-            var cleaned = String(raw).replace(/\s+/g, ' ').trim();
-            if (cleaned) return bounded(cleaned, order[j]);
+            // ⛔ The RAW attribute goes in, never a pre-cleaned copy: `bounded` keeps
+            // both forms, and the selector is composed from the raw one.
+            var candidate = bounded(raw, order[j]);
+            if (candidate) return candidate;
         }
         return null;
     }
