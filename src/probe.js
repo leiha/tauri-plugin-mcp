@@ -318,16 +318,86 @@
         return el;
     }
 
+    /**
+     * The ACCESSIBLE NAME of an element — what the page itself already declares it
+     * to be, for anyone who cannot see it.
+     *
+     * ⚔ WHY IT IS HERE, AND IT IS A MEASURED GAP. `describeElement` used to report
+     * `id`, `name` and `text` only, and a control that has none of the three came
+     * back INDISTINGUISHABLE — nothing but a build-hashed class such as
+     * `svelte-1gt38sp`. MEASURED 2026-08-15 over three live surfaces (a Vite-served
+     * cockpit, a local html file, an app shell): 36 interactive elements, 9 of them
+     * mute that way, and **all 9** carried an accessible name the description threw
+     * away. The two toolbar buttons that sent me looking said *« Mode focus (F11) »*
+     * and *« Réglages (Ctrl+,) »* — a caller reading the map saw two identical
+     * empty buttons and could name neither.
+     *
+     * 🔑 WHAT IT BUYS, precisely: a caller that must WRITE a selector gets one that
+     * survives a rebuild. `button[aria-label="Réglages (Ctrl+,)"]` is authored
+     * content; a hashed class is a build artefact and changes under it. A Svelte
+     * `svelte-xxxxxxx` class is not even an element mark — it scopes the whole
+     * COMPONENT, so it matches the section and every control inside it alike.
+     *
+     * ⚔ AND THE NAME ALONE IS NOT ENOUGH — measured the same day, by the first
+     * attempt to USE it. Given only `« Adresse de la page à ouvrir »`, the caller
+     * has to GUESS which of four attributes carries it; guessing `placeholder`
+     * missed, because the name came from `aria-label` while the placeholder held
+     * something else entirely. Reporting a name without its source is a handle that
+     * cannot be turned. Hence `from`: the caller composes `[<from>="<value>"]` and
+     * nothing is inferred.
+     * ⛔ The one case that does NOT compose is `aria-labelledby` — the name lives in
+     * ANOTHER element. `from` says so plainly instead of handing back a selector
+     * that would not resolve.
+     *
+     * ⚠ THIS IS THE W3C ORDER, NOT THE WHOLE ALGORITHM. accname resolves
+     * `aria-labelledby` > `aria-label` > native labelling > `title`, and that order
+     * is honoured here. What is NOT implemented: `<label for>` and wrapping-label
+     * lookup, id lists that mix in text nodes, and `aria-labelledby` chains. Said
+     * here rather than discovered — a null answer does not prove the element has no
+     * accessible name, only that these four attributes are empty.
+     */
+    function accessibleName(el) {
+        if (!el || !el.getAttribute) return null;
+        var by = el.getAttribute('aria-labelledby');
+        if (by) {
+            var parts = [];
+            var ids = by.split(/\s+/);
+            for (var i = 0; i < ids.length; i++) {
+                var target = ids[i] ? document.getElementById(ids[i]) : null;
+                if (target) parts.push(target.innerText || target.textContent || '');
+            }
+            var joined = parts.join(' ').replace(/\s+/g, ' ').trim();
+            if (joined) return { value: joined.slice(0, 80), from: 'aria-labelledby' };
+        }
+        // W3C accname order, minus the native-label lookup this does not implement.
+        var order = ['aria-label', 'alt', 'placeholder', 'title'];
+        for (var j = 0; j < order.length; j++) {
+            var raw = el.getAttribute(order[j]);
+            if (!raw) continue;
+            var cleaned = String(raw).replace(/\s+/g, ' ').trim();
+            if (cleaned) return { value: cleaned.slice(0, 80), from: order[j] };
+        }
+        return null;
+    }
+
     /** A short, comparable description — enough for a caller to see WHAT was hit. */
     function describeElement(el) {
         if (!el) return null;
+        var named = accessibleName(el);
         return {
             tag: el.tagName ? el.tagName.toLowerCase() : null,
             id: el.id || null,
             name: el.getAttribute ? el.getAttribute('name') : null,
             type: el.getAttribute ? el.getAttribute('type') : null,
             classes: el.className && el.className.baseVal === undefined ? String(el.className) : null,
-            text: (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80)
+            text: (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80),
+            // The last handle left when `id`, `name` and `text` are all empty — see
+            // `accessibleName` for the measurement that put it here. Flattened into
+            // two fields rather than a nested object, so it reads like every other
+            // entry of this description and survives a shallow JSON dump.
+            accessibleName: named ? named.value : null,
+            // Which attribute carries it — what makes `[from="value"]` composable.
+            accessibleNameFrom: named ? named.from : null
         };
     }
 

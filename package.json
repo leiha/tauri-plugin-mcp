@@ -23,7 +23,8 @@
     "build:all": "pnpm build && pnpm build-plugin && pnpm build:server",
     "clean": "rm -rf node_modules dist-js target mcp-server-ts/node_modules mcp-server-ts/dist",
     "prepublishOnly": "pnpm build",
-    "pretest": "pnpm build"
+    "pretest": "pnpm build",
+    "test:probe": "node --test test/"
   },
   "dependencies": {
     "@tauri-apps/api": ">=2.2.0"
