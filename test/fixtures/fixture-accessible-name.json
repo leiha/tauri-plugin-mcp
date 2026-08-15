@@ -730,9 +730,10 @@
    "intent": "A lone HIGH surrogate in the MIDDLE of the value \u2014 not at the cut, so the step-back never sees it. \u2b50 REPARE 2026-08-16 : la portion AVANT le surrogate isole reste utilisable, donc un prefixe qui resout.",
    "expect": {
     "operator": "^=",
-    "resolution": "unique"
+    "resolution": "ambiguous"
    },
-   "status": "contract"
+   "status": "contract",
+   "note": "\u2696 ATTENTE CORRIGEE PAR RAISONNEMENT, pas re-derivee du comportement. Elle disait `unique` : c'etait FAUX quand je l'ai ecrite. La valeur est 'ab' + surrogate isole, donc la portion composable fait DEUX caracteres, et `[title^=\"ab\"]` ne peut pas etre unique dans une page de 71 elements \u2014 aucune mesure n'etait necessaire pour le savoir. \u21d2 C'est le COUT ASSUME de l'absence de plancher de longueur (voir `d-nul-early`) : le selecteur elargit au lieu de rendre zero. Le progres est reel \u2014 3 matches VISIBLES via `accessibleNameSelectorMatches` valent mieux que 0 silencieux \u2014 mais ce n'est pas une prise unique, et l'ecrire serait mentir."
   },
   {
    "id": "d-ws-nbsp-only",
