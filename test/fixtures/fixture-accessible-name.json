@@ -1,0 +1,857 @@
+{
+ "$comment": "Adversarial corpus for accessibleNameSelector. Every case was MEASURED against a live webview, never reasoned about. `expect` records the behaviour of the contract as it stands; a case marked status=known-defect records what the probe DOES today together with what it SHOULD do \u2014 freezing a defect as if it were the contract is how a golden fixture stops being a judge. | 2026-08-16, quatrieme tour : trois known-defects REPARES (d-nul-only, d-lone-low, d-lone-high-mid) \u2014 leur attente est passee a ce que `shouldBe` decrivait, PUIS mesuree. d-nul-early reste tel quel avec un desaccord argumente dans son champ `note`. Aucune attente n'a ete re-derivee du comportement courant.",
+ "contract": {
+  "displayBound": 80,
+  "selectorBound": 200,
+  "resolution": "unique = exactly one node and it is the case's own element; ambiguous = more than one, own element included; zero = no node while the element is present; none = the probe returns a null selector",
+  "operators": "= (whole raw value carried) | ^= (value shortened by a NUL or by the selector bound) | null"
+ },
+ "valueEncoding": "Each attribute value is the INNER of a JSON string, ASCII only: read it with JSON.parse('\"' + value + '\"'). A run of 20+ identical characters is folded into {{c*N}} and must be expanded AFTER unescaping. No literal non-ASCII character may ever appear here \u2014 the corpus is made of characters that are invisible on screen.",
+ "attributeCases": [
+  {
+   "id": "c-plain",
+   "attributes": {
+    "aria-label": "Reglages (Ctrl+,)"
+   },
+   "intent": "Baseline: an ordinary label composes an exact selector.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-accent",
+   "attributes": {
+    "aria-label": "R\\u00e9glages (Ctrl+,)"
+   },
+   "intent": "Non-ASCII letters are not a problem and must not be escaped.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-quote-bs",
+   "attributes": {
+    "title": "dit \\\"bonjour\\\" \\\\ ok"
+   },
+   "intent": "A quote and a backslash used to make querySelector THROW. They must be escaped, not dropped.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-lead-space",
+   "attributes": {
+    "title": " Reglages "
+   },
+   "intent": "Leading and trailing spaces. The displayed name trims them; the DOM does not. Composing on the display yields ZERO nodes.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-inner-2sp",
+   "attributes": {
+    "aria-label": "Mode  focus"
+   },
+   "intent": "A double space inside the value. Same class as above and the one that occurs in real code.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-newline",
+   "attributes": {
+    "title": "Ligne un\\u000aLigne deux"
+   },
+   "intent": "A newline in the attribute: collapsed by the display normalisation, and illegal raw in a CSS string.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-tab",
+   "attributes": {
+    "title": "colonne\\u0009valeur"
+   },
+   "intent": "A tab: same double bind as the newline.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-nbsp",
+   "attributes": {
+    "aria-label": "Ctrl\\u00a0+\\u00a0,"
+   },
+   "intent": "U+00A0 is whitespace to the JS regex and an ordinary character to the DOM. The gap between the two is the defect.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-u2028",
+   "attributes": {
+    "title": "avant\\u2028apres"
+   },
+   "intent": "U+2028 LINE SEPARATOR is in the JS \\s class. Most people do not know that.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-feff",
+   "attributes": {
+    "aria-label": "zero\\ufeffwidth"
+   },
+   "intent": "U+FEFF is in the JS \\s class too. A stray BOM inside a value is enough.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-nul",
+   "attributes": {
+    "title": "avant\\u0000apres"
+   },
+   "intent": "U+0000 makes equality unreachable: neither the NUL nor U+FFFD matches. The cut before it keeps the element reachable by prefix.",
+   "expect": {
+    "operator": "^=",
+    "resolution": "ambiguous"
+   },
+   "status": "contract",
+   "note": "Ambiguous by construction \u2014 the prefix is whatever precedes the NUL. The count is what makes that visible."
+  },
+  {
+   "id": "c-soh",
+   "attributes": {
+    "title": "avant\\u0001apres"
+   },
+   "intent": "U+0001, unlike the NUL, survives escaping and composes an exact match. The two control characters are NOT interchangeable.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-brackets",
+   "attributes": {
+    "aria-label": "tableau[0] ]fin["
+   },
+   "intent": "Brackets are literal inside a quoted CSS string and must NOT be escaped.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-apostrophe",
+   "attributes": {
+    "aria-label": "l'\\u00e9l\\u00e9ment d'Orun"
+   },
+   "intent": "A single quote does not close a double-quoted string. Escaping it would break the match.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-caret-eq",
+   "attributes": {
+    "aria-label": "a^=b~=c|=d$=e*=f"
+   },
+   "intent": "Selector operators appearing INSIDE the value are inert. Guards against a naive escape pass.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-semicolon",
+   "attributes": {
+    "aria-label": "a;b{c}d/*e*/f"
+   },
+   "intent": "CSS punctuation and a comment sequence inside the value are inert.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-emoji-short",
+   "attributes": {
+    "aria-label": "Sauver \\ud83d\\udcbe"
+   },
+   "intent": "A complete surrogate pair well inside the bound must be left alone.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-emoji-cut",
+   "attributes": {
+    "title": "{{x*79}}\\ud83d\\udcbesuite apres la coupe"
+   },
+   "intent": "REGRESSION GUARD, and its original purpose is now moot. It used to cut mid-pair at the 80 bound; with a selector bound of 200 its raw value fits whole. It now pins the opposite property: the DISPLAY bound must not shorten the selector. Expecting '=' here is what fails if anyone composes on the display value again.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-zwj",
+   "attributes": {
+    "aria-label": "famille \\ud83d\\udc68\\u200d\\ud83d\\udc69\\u200d\\ud83d\\udc67 ok"
+   },
+   "intent": "A ZWJ emoji sequence: several pairs plus joiners, none of them whitespace.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-rtl",
+   "attributes": {
+    "aria-label": "\\u0645\\u0631\\u062d\\u0628\\u0627 bonjour \\u200f fin"
+   },
+   "intent": "Right-to-left text plus U+200F. Visually scrambled, mechanically ordinary.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-softhyphen",
+   "attributes": {
+    "aria-label": "soft\\u00adhyphen"
+   },
+   "intent": "U+00AD is invisible and is NOT whitespace. It must survive into the selector.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-exactly80",
+   "attributes": {
+    "title": "{{z*80}}"
+   },
+   "intent": "Exactly the display bound. Pins that the display boundary has no effect on the operator.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-81",
+   "attributes": {
+    "title": "{{z*81}}"
+   },
+   "intent": "One past the display bound. Used to produce a prefix that swallowed c-exactly80; must now be an exact match of its own.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-huge",
+   "attributes": {
+    "title": "{{w*10000}}"
+   },
+   "intent": "10000 characters. Pins that the answer does not explode and that the selector bound applies.",
+   "expect": {
+    "operator": "^=",
+    "resolution": "unique"
+   },
+   "status": "contract",
+   "note": "Overlaps d-len201; this is the case to drop first if the fixture must shrink."
+  },
+  {
+   "id": "c-blank-only",
+   "attributes": {
+    "aria-label": "   "
+   },
+   "intent": "Whitespace-only is not a name: no name, no selector, and no fallback available.",
+   "expect": {
+    "operator": null,
+    "resolution": "none"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-blank-fallbk",
+   "attributes": {
+    "aria-label": "   ",
+    "title": "le vrai nom"
+   },
+   "intent": "A whitespace-only aria-label must FALL THROUGH to the title, not report an empty name.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-empty-attr",
+   "attributes": {
+    "aria-label": "",
+    "title": "repli titre"
+   },
+   "intent": "An empty aria-label must fall through the same way.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-share-a",
+   "attributes": {
+    "title": "{{p*80}} ALPHA"
+   },
+   "intent": "Two elements sharing their first 80 characters. Under the old contract they produced byte-identical rows; the selector bound of 200 now separates them.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-share-b",
+   "attributes": {
+    "title": "{{p*80}} BETA"
+   },
+   "intent": "The other half of the pair above.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-share-c",
+   "attributes": {
+    "title": "{{p*80}}"
+   },
+   "intent": "The bare shared prefix, present so a prefix match would visibly capture three elements if the bounds regressed.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-ona-real",
+   "attributes": {
+    "placeholder": "https://api.exemple.com/v1/ressources  \\u2014  ou  localhost:3000/health"
+   },
+   "intent": "The real value found in ona/app/src/atelier/AtelierTab.svelte:83 \u2014 double spaces around an em dash. The only in-the-wild witness of the whole class; it must never be edited to match the fixture.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-labelledby",
+   "attributes": {
+    "aria-labelledby": "lbl-1"
+   },
+   "intent": "The name lives in ANOTHER element, so no attribute selector over this one can carry it. Null is the honest answer.",
+   "expect": {
+    "operator": null,
+    "resolution": "none"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "c-nested-child",
+   "attributes": {
+    "aria-label": "Zone de reglages"
+   },
+   "intent": "A button whose ancestor carries the SAME aria-label. Without tag qualification the equality hits both.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "d-len199",
+   "attributes": {
+    "title": "{{A*199}}"
+   },
+   "intent": "One below the selector bound: exact match.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "d-len200",
+   "attributes": {
+    "title": "{{B*200}}"
+   },
+   "intent": "EXACTLY the selector bound: still an exact match. This is the boundary no unit test covers \u2014 a surviving mutant proved it.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "d-len201",
+   "attributes": {
+    "title": "{{C*201}}"
+   },
+   "intent": "One above the selector bound: prefix match.",
+   "expect": {
+    "operator": "^=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "d-surr-at-200",
+   "attributes": {
+    "title": "{{D*199}}\\ud83d\\udcbequeue"
+   },
+   "intent": "The bound cut lands INSIDE a surrogate pair. A lone high surrogate at the edge makes the prefix resolve to zero, so the cut must step back one unit.",
+   "expect": {
+    "operator": "^=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "d-surr-at-198",
+   "attributes": {
+    "title": "{{E*198}}\\ud83d\\udcbequeue"
+   },
+   "intent": "The cut lands just AFTER a complete pair. The step-back must NOT fire here.",
+   "expect": {
+    "operator": "^=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "d-share200-a",
+   "attributes": {
+    "title": "{{F*200}} ALPHA"
+   },
+   "intent": "Two elements sharing 200 characters and differing after. The shortened selectors are byte-identical; only the reported match count separates the rows.",
+   "expect": {
+    "operator": "^=",
+    "resolution": "ambiguous"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "d-share200-b",
+   "attributes": {
+    "title": "{{F*200}} BETA"
+   },
+   "intent": "The other half of the pair above.",
+   "expect": {
+    "operator": "^=",
+    "resolution": "ambiguous"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "d-nul-at-0",
+   "attributes": {
+    "title": "\\u0000tout le reste"
+   },
+   "intent": "A NUL in first position leaves nothing to compose. Must be null, never [attr^=\"\"] which matches every element carrying the attribute.",
+   "expect": {
+    "operator": null,
+    "resolution": "none"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "d-nul-early",
+   "attributes": {
+    "title": "a\\u0000bcdefghij"
+   },
+   "intent": "A NUL in second position leaves a ONE-CHARACTER prefix. The empty guard does not fire and the selector is nearly as wide as the empty one.",
+   "expect": {
+    "operator": "^=",
+    "resolution": "ambiguous"
+   },
+   "status": "contract",
+   "note": "\u2696 DESACCORD ASSUME avec le `shouldBe` d'origine, qui demandait un plancher de longueur. Un seuil de 8 a ete essaye puis RETIRE : il detruisait des selecteurs legitimes (`[title^=\"avant\"]` atteint exactement un element) pour attraper un cas degenere, et il inventait un nombre magique que rien ne mesurait. Surtout il aurait ete une rustine : `[aria-label=\"Fermer onglet\"]` attrape deux elements a longueur PLEINE, donc la largeur n'a jamais ete une propriete des prefixes courts. La largeur est desormais RAPPORTEE (`accessibleNameSelectorMatches` vaut 25 ici) et lue avant d'agir."
+  },
+  {
+   "id": "d-nul-decoy",
+   "attributes": {
+    "title": "a beaucoup de titres commencent ainsi"
+   },
+   "intent": "A plausible title starting with the same letter as d-nul-early. Present so the width of that one-character prefix is visible rather than theoretical.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "d-nul-then-surr",
+   "attributes": {
+    "title": "ab\\ud83d\\u0000\\udcbe"
+   },
+   "intent": "A lone high surrogate immediately followed by a NUL: the NUL cut must run first, then the surrogate step-back on the result.",
+   "expect": {
+    "operator": "^=",
+    "resolution": "ambiguous"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "d-nul-only",
+   "attributes": {
+    "aria-label": "\\u0000",
+    "title": "le vrai nom masque"
+   },
+   "intent": "An aria-label holding nothing but a NUL. The NUL is neither JS whitespace nor trimmed, so it is accepted as a name and MASKS the valid title behind it. \u2b50 REPARE 2026-08-16 : `bounded` rejette desormais une valeur sans substance composable (NUL, surrogate isole, controle seul), donc la marche W3C atteint le `title`.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "d-ctrl-hex",
+   "attributes": {
+    "title": "a\\u000abeef01"
+   },
+   "intent": "A newline followed by HEX DIGITS. The hex escape must be closed by a space or CSS eats the following letters as more digits.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "d-ctrl-space",
+   "attributes": {
+    "title": "a\\u000a b"
+   },
+   "intent": "A newline followed by a SPACE. CSS consumes at most one whitespace as the escape terminator, so the literal space must survive.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "d-ctrl-2spaces",
+   "attributes": {
+    "title": "a\\u000a  b"
+   },
+   "intent": "A newline followed by TWO spaces, to pin that only one is consumed.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "d-ctrl-end",
+   "attributes": {
+    "title": "abc\\u000a"
+   },
+   "intent": "A control character in last position.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "d-ctrl-start",
+   "attributes": {
+    "title": "\\u000aabc"
+   },
+   "intent": "A control character in first position.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "d-cr",
+   "attributes": {
+    "title": "a\\u000db"
+   },
+   "intent": "A carriage return. The CSS preprocessor rewrites a RAW one, so it must arrive escaped.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "d-crlf",
+   "attributes": {
+    "title": "a\\u000d\\u000ab"
+   },
+   "intent": "CR immediately followed by LF: two escapes in a row, and a sequence the preprocessor collapses when raw.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "d-ff",
+   "attributes": {
+    "title": "a\\u000cb"
+   },
+   "intent": "A form feed, also rewritten by the preprocessor when raw.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "d-vtab",
+   "attributes": {
+    "title": "a\\u000bb"
+   },
+   "intent": "A vertical tab, whose hex escape is \\b and reads like a different escape entirely.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "d-del",
+   "attributes": {
+    "title": "a\\u007fb"
+   },
+   "intent": "U+007F, the one escaped character outside the C0 range.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "d-many-ctrl",
+   "attributes": {
+    "title": "a\\u0001\\u0002\\u0003b"
+   },
+   "intent": "Three consecutive control characters, so consecutive escapes are exercised.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "d-c1-nel",
+   "attributes": {
+    "title": "a\\u0085b"
+   },
+   "intent": "U+0085 is a C1 control that the escape does NOT cover. Pins that it does not need to: CSS carries it literally.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "d-c1-9f",
+   "attributes": {
+    "title": "a\\u009fb"
+   },
+   "intent": "U+009F, the far end of the C1 range, same point.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "d-lone-low",
+   "attributes": {
+    "title": "\\udcbeabc"
+   },
+   "intent": "A lone LOW surrogate in first position. The step-back only inspects the last character and only for a HIGH surrogate, so this passes straight through. \u2b50 REPARE 2026-08-16 : `composablePrefix` s'arrete au PREMIER caractere non composable ou qu'il soit. Ici le surrogate isole est en tete, donc rien n'est composable et le selecteur est `null` \u2014 refus assume, plus un zero silencieux.",
+   "expect": {
+    "operator": null,
+    "resolution": "none"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "d-lone-high-mid",
+   "attributes": {
+    "title": "ab\\ud83dcd"
+   },
+   "intent": "A lone HIGH surrogate in the MIDDLE of the value \u2014 not at the cut, so the step-back never sees it. \u2b50 REPARE 2026-08-16 : la portion AVANT le surrogate isole reste utilisable, donc un prefixe qui resout.",
+   "expect": {
+    "operator": "^=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "d-ws-nbsp-only",
+   "attributes": {
+    "aria-label": "\\u00a0",
+    "title": "repli apres nbsp seul"
+   },
+   "intent": "An aria-label holding a single NBSP falls through to the title correctly, because NBSP IS in the JS whitespace class. The contrast with d-nul-only is the whole point: the fallback turns on one character.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  }
+ ],
+ "wrapperCases": [
+  {
+   "id": "c-nested-parent",
+   "intent": "A div[role=button] carrying the same aria-label as the button it wraps. Without tag qualification a plain equality hits both; with it, each reaches only itself.",
+   "build": "wrap c-nested-child in <div id=\"c-nested-parent\" role=\"button\" aria-label=\"Zone de reglages\">",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  }
+ ],
+ "parsedCases": [
+  {
+   "id": "e-entity-amp",
+   "html": "<button id=\"e-entity-amp\" title=\"a&amp;b\">e-entity-amp</button>",
+   "intent": "A character reference: the DOM holds the DECODED value, and the selector must carry the decoded form too.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "e-entity-quot",
+   "html": "<button id=\"e-entity-quot\" title=\"a&quot;b\">e-entity-quot</button>",
+   "intent": "A quote arriving through a character reference rather than through setAttribute.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "e-entity-lf",
+   "html": "<button id=\"e-entity-lf\" title=\"a&#10;b\">e-entity-lf</button>",
+   "intent": "A newline the parser produces. Pins that the escape path is reached from the parser, not only from JS.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "e-entity-nul",
+   "html": "<button id=\"e-entity-nul\" title=\"a&#0;b\">e-entity-nul</button>",
+   "intent": "Proves the HTML parser turns a NUL reference into U+FFFD, so the NUL path is unreachable from markup and only JS can produce it. This is what bounds how much the NUL cases matter.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "e-entity-nbsp",
+   "html": "<button id=\"e-entity-nbsp\" title=\"a&nbsp;b\">e-entity-nbsp</button>",
+   "intent": "The most ordinary way a NBSP enters a real page.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "e-src-newline",
+   "html": "<button id=\"e-src-newline\" title=\"ligne un\nligne deux\">e-src-newline</button>",
+   "intent": "A literal newline inside an attribute in the SOURCE \u2014 how a wrapped attribute reaches the DOM in real templates.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "e-upper-attr",
+   "html": "<button id=\"e-upper-attr\" TITLE=\"attribut en majuscules\">e-upper-attr</button>",
+   "intent": "An uppercase attribute NAME in the source. HTML lowercases it on both sides, so the hardcoded lowercase name in the composed selector is safe.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique"
+   },
+   "status": "contract"
+  },
+  {
+   "id": "e-svg-a",
+   "html": "<svg width=\"20\" height=\"20\"><a id=\"e-svg-a\" href=\"#x\" aria-label=\"lien svg\"><rect width=\"10\" height=\"10\"/></a></svg>",
+   "intent": "An SVG anchor picked up by the map's a[href] clause. The tag must be OMITTED: SVG tag names are case-sensitive in selectors.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique",
+    "tagQualified": false
+   },
+   "status": "contract"
+  },
+  {
+   "id": "e-svg-rect",
+   "html": "<svg width=\"20\" height=\"20\"><rect id=\"e-svg-rect\" role=\"button\" aria-label=\"rect svg\" width=\"10\" height=\"10\"/></svg>",
+   "intent": "An SVG shape reached through [role=button]. Same rule, and it also proves aria-label works across the namespace boundary.",
+   "expect": {
+    "operator": "=",
+    "resolution": "unique",
+    "tagQualified": false
+   },
+   "status": "contract"
+  }
+ ]
+}

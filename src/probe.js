@@ -41,6 +41,19 @@
     var CHUNK = 3000;          // conservative: cookie limit is ~4096 including the name
     var PREFIX = '__tmcp_';
 
+    /**
+     * ⭐ THE IDENTITY OF THIS TEXT — not a version number.
+     *
+     * `version` below says `2`, and `2` has designated FOUR different contracts on
+     * four binaries at the same time (measured 2026-08-16). A number a human bumps
+     * cannot identify a text; a hash of the text can. `map()` reports it, and
+     * `test/live-check.mjs` REFUSES to judge a map whose fingerprint does not match
+     * the `probe.js` it was launched from — because a verdict on an unknown text is
+     * not a verdict.
+     * ⚠ Maintained by `node test/fingerprint.mjs --write`; never edit by hand.
+     */
+    var PROBE_FINGERPRINT = '42d810e3714d';
+
     var consoleLog = [];
     var networkLog = [];
     var started = Date.now();
@@ -374,9 +387,13 @@
     /**
      * The bound that keeps a 200-element map readable. It is a real constraint —
      * a page of long `title` attributes would otherwise dwarf everything else in
-     * the answer — which is why the fix is not to remove it but to REPORT it:
-     * `truncated` is what turns `=` into `^=` downstream, and a prefix match is
-     * correct by construction where a truncated equality match is simply wrong.
+     * the answer — which is why the fix is not to remove it but to REPORT it.
+     * ⛔ THIS SENTENCE USED TO SAY that `truncated` is what turns `=` into `^=`
+     * downstream. It is FALSE since the selector moved onto `raw`, and it was
+     * caught by falsification reading the comment rather than the code: the
+     * operator is decided by `prefix.shortened`, computed on the RAW value, and
+     * `truncated` now speaks only about what the map DISPLAYS. A reader who
+     * trusted this line believed the operator followed the display bound.
      */
     var NAME_BOUND = 80;
 
@@ -402,9 +419,36 @@
      */
     var SELECTOR_BOUND = 200;
 
+    /**
+     * Does this value carry anything a human could read as a name?
+     *
+     * ⚔ MEASURED: an `aria-label` holding a single NUL MASKED a perfectly good
+     * `title`. A NUL is neither whitespace to JS nor trimmable, so `trim()` left it
+     * standing, `bounded` accepted it as a name, and the W3C walk never reached the
+     * next attribute — the probe reported « no selector can carry this name » for an
+     * element that `[title="…"]` reached in one hop. A false NEGATIVE, and the only
+     * one of its family that `accessibleNameSelectorMatches` cannot expose, since a
+     * missing selector has no count.
+     * ⇒ Emptiness is not « nothing left after trim », it is « nothing a selector
+     * could ever carry ».
+     */
+    function hasNameSubstance(text) {
+        for (var i = 0; i < text.length; i++) {
+            var code = text.charCodeAt(i);
+            if (code <= 0x1f || code === 0x7f) continue;        // control character
+            if (isHighSurrogate(code)) {
+                if (isLowSurrogate(text.charCodeAt(i + 1))) return true;   // real pair
+                continue;                                       // lone half: no substance
+            }
+            if (isLowSurrogate(code)) continue;
+            return true;
+        }
+        return false;
+    }
+
     function bounded(raw, from) {
         var display = String(raw).replace(/\s+/g, ' ').trim();
-        if (!display) return null;
+        if (!display || !hasNameSubstance(display)) return null;
         return {
             value: display.slice(0, NAME_BOUND),
             from: from,
@@ -454,18 +498,50 @@
      * SURROGATE PAIR: ⚔ MEASURED, a lone high surrogate at the edge makes the `^=`
      * resolve to zero — the fix reproducing the failure it exists to prevent.
      */
+    /** A UTF-16 code unit that is half of a pair — meaningless on its own. */
+    function isHighSurrogate(code) { return code >= 0xd800 && code <= 0xdbff; }
+    function isLowSurrogate(code) { return code >= 0xdc00 && code <= 0xdfff; }
+
+    /**
+     * The longest leading run of `raw` that a selector can carry VERBATIM.
+     *
+     * ⚔ THE FIRST VERSION GUARDED A POSITION INSTEAD OF A PROPERTY, and independent
+     * falsification killed it: it cut before a NUL, then checked the LAST code unit
+     * for a HIGH surrogate. So a lone LOW surrogate in front, and a lone HIGH
+     * surrogate in the MIDDLE, sailed straight into the selector and resolved to
+     * ZERO nodes — measured, both of them.
+     *
+     * 🔑 The question is not « did my cut create a lone surrogate » but « does this
+     * value contain anything a selector cannot carry ». Walking once and stopping at
+     * the first such character answers it wherever the character sits.
+     */
+    function composablePrefix(raw) {
+        for (var i = 0; i < raw.length; i++) {
+            var code = raw.charCodeAt(i);
+            if (code === 0) return { text: raw.slice(0, i), shortened: true };
+            if (isHighSurrogate(code)) {
+                if (isLowSurrogate(raw.charCodeAt(i + 1))) {
+                    i++;               // a well-formed pair: keep both units
+                    continue;
+                }
+                return { text: raw.slice(0, i), shortened: true };
+            }
+            if (isLowSurrogate(code)) return { text: raw.slice(0, i), shortened: true };
+        }
+        return { text: raw, shortened: false };
+    }
+
     function prefixForSelector(raw) {
-        var nul = raw.indexOf('\u0000');
-        var text = nul === -1 ? raw : raw.slice(0, nul);
-        var shortened = nul !== -1;
+        var composable = composablePrefix(raw);
+        var text = composable.text;
+        var shortened = composable.shortened;
         if (text.length > SELECTOR_BOUND) {
             text = text.slice(0, SELECTOR_BOUND);
             shortened = true;
-        }
-        var last = text.charCodeAt(text.length - 1);
-        if (last >= 0xd800 && last <= 0xdbff) {
-            text = text.slice(0, text.length - 1);
-            shortened = true;
+            // The bound itself can land inside a pair; step back rather than orphan it.
+            if (isHighSurrogate(text.charCodeAt(text.length - 1))) {
+                text = text.slice(0, text.length - 1);
+            }
         }
         return { text: text, shortened: shortened };
     }
@@ -493,6 +569,21 @@
      */
     var HTML_NAMESPACE = 'http://www.w3.org/1999/xhtml';
 
+    /**
+     * ⚔ A SHORTENED PREFIX CAN BE VERY WIDE, AND THAT IS DELIBERATELY NOT REFUSED.
+     * Falsification measured a value whose second character was a NUL composing
+     * `[title^="a"]` — 25 matches, and `act click` on it hit an unrelated control,
+     * since `need()` takes the FIRST match.
+     * ⛔ The fix is NOT a minimum length. A threshold of 8 was tried and reverted:
+     * it destroyed perfectly good selectors (`[title^="avant"]` reaching exactly one
+     * element) to catch a degenerate case, and it invented a magic number nothing
+     * measured. And it would have been a rustine: `[aria-label="Fermer onglet"]`
+     * matches two elements at FULL length, so width was never a property of short
+     * prefixes.
+     * ⇒ Width is REPORTED instead — `accessibleNameSelectorMatches` says 25, and a
+     * caller reads it before acting. Making ambiguity legible beats guessing a
+     * cutoff, and it covers the cases a cutoff cannot see.
+     */
     function accessibleNameSelector(named, el) {
         if (!named || named.from === 'aria-labelledby') return null;
         var prefix = prefixForSelector(named.raw);
@@ -762,6 +853,9 @@
         return {
             url: String(location.href),
             title: document.title,
+            // Which probe TEXT produced this map — so a harness can refuse to
+            // judge a binary that is not the one it was launched against.
+            probeFingerprint: PROBE_FINGERPRINT,
             total: nodes.length,
             returned: out.length,
             /**
@@ -784,7 +878,9 @@
     window.__TMCP__ = {
         // Bumped to 2 when `answer` learned to await. A host can read this to know
         // whether asynchronous expressions are supported, instead of assuming.
+        // ⚠ It identifies a CAPABILITY, never a text — see `fingerprint`.
         version: 2,
+        fingerprint: PROBE_FINGERPRINT,
         answer: answer,
         clear: clear,
         console: function () { return consoleLog; },

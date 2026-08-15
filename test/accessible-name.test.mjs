@@ -84,8 +84,12 @@ function liftNaming() {
     `var SELECTOR_BOUND = ${selectorBound[1]};`,
     controls[0],
     namespace[0],
+    liftFunction(text, 'isHighSurrogate'),
+    liftFunction(text, 'isLowSurrogate'),
+    liftFunction(text, 'hasNameSubstance'),
     liftFunction(text, 'bounded'),
     liftFunction(text, 'escapeAttributeValue'),
+    liftFunction(text, 'composablePrefix'),
     liftFunction(text, 'prefixForSelector'),
     liftFunction(text, 'accessibleNameSelector'),
     liftFunction(text, 'accessibleName'),
@@ -345,4 +349,66 @@ test('the selector is qualified by tag — but only when the tag is safe to lowe
 
   // No element at all (the function is also called without one) stays valid.
   assert.equal(accessibleNameSelector(named), '[aria-label="Fermer"]');
+});
+
+
+/**
+ * ⭐ WHAT THE FOURTH ROUND ADDED — and every one of these was found by
+ * falsification, never by the author.
+ */
+test('a lone surrogate ANYWHERE stops the selector, not only at the cut edge', () => {
+  // ⚔ The first guard checked the LAST code unit for a HIGH surrogate only. A lone
+  // LOW surrogate in front, and a lone HIGH surrogate in the middle, both sailed
+  // into the selector and resolved to ZERO nodes. Position was never the property.
+  const leading = selectorFor({ title: '\uDCBEabcdefgh' });
+  assert.equal(leading, null, 'nothing composable before a leading lone surrogate');
+
+  const middle = selectorFor({ title: 'abcdefgh\uD83Dijkl' });
+  assert.equal(middle, '[title^="abcdefgh"]', 'the run BEFORE the lone half is still usable');
+
+  // A well-formed pair must survive untouched — the guard must not eat real emoji.
+  assert.equal(selectorFor({ title: 'ok \u{1F4BE} fin' }), '[title="ok \u{1F4BE} fin"]');
+});
+
+test('a value with no composable substance is NOT a name — it must fall through', () => {
+  const { accessibleName } = liftNaming()(NO_DOCUMENT);
+  // ⚔ An `aria-label` holding a single NUL MASKED a valid `title`: NUL is neither
+  // whitespace nor trimmable, so it passed as a name and the W3C walk stopped.
+  // The probe then answered « no selector can carry this » for an element that
+  // `[title="…"]` reached in one hop — a false NEGATIVE, and the only member of
+  // this family that the match count cannot expose.
+  const masked = accessibleName(element({ 'aria-label': '\u0000', title: 'le vrai nom' }));
+  assert.equal(masked.from, 'title', 'the NUL-only label must not win');
+  assert.equal(masked.value, 'le vrai nom');
+
+  // Same for a lone surrogate, and for a control character.
+  assert.equal(accessibleName(element({ 'aria-label': '\uD83D', title: 'vrai' })).from, 'title');
+  assert.equal(accessibleName(element({ 'aria-label': '\u0007', title: 'vrai' })).from, 'title');
+
+  // ⚠ And a NBSP-only label still falls through, as it always did — that path went
+  // through `trim()`. The two must agree, or the behaviour depends on which
+  // invisible character happened to be used.
+  assert.equal(accessibleName(element({ 'aria-label': '\u00a0', title: 'vrai' })).from, 'title');
+
+  // Nothing at all anywhere stays null.
+  assert.equal(accessibleName(element({ 'aria-label': '\u0000' })), null);
+});
+
+test('the selector bound is exact AT the boundary, not merely near it', () => {
+  const { accessibleName, accessibleNameSelector, SELECTOR_BOUND } = liftNaming()(NO_DOCUMENT);
+  // ⚔ A mutation turning `>` into `>=` survived the whole suite: every existing
+  // case jumped OVER the boundary (bound + 50, bound + 20). A boundary is exactly
+  // where an off-by-one lives, so it is tested exactly there.
+  const at = 'y'.repeat(SELECTOR_BOUND);
+  assert.equal(
+    accessibleNameSelector(accessibleName(element({ title: at }))),
+    `[title="${at}"]`,
+    'a value of exactly SELECTOR_BOUND must still compose an EQUALITY',
+  );
+  const over = 'y'.repeat(SELECTOR_BOUND + 1);
+  assert.equal(
+    accessibleNameSelector(accessibleName(element({ title: over }))),
+    `[title^="${'y'.repeat(SELECTOR_BOUND)}"]`,
+    'one character more must switch to a prefix',
+  );
 });

@@ -87,3 +87,5 @@ Desktop.ini
 
 .claude/
 CLAUDE.md
+# Genere depuis test/fixtures/fixture-accessible-name.json (SSOT) — ne pas commiter
+test/fixtures/accessible-name-page.html
