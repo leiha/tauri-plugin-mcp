@@ -13,14 +13,33 @@
  *
  * ── HOW TO RUN IT ────────────────────────────────────────────────────────────
  *
- *   1. Serve the fixture in a DEBUG-built app that embeds this plugin, and take
- *      its map. With oshun's light table:
+ *   0. GENERATE the page first. It is gitignored — derived from the fixture JSON,
+ *      which is the SSOT — so a fresh clone does NOT have it:
  *
- *        oshun lightbox open-file <path>/test/fixtures/accessible-name-cases.html
+ *        node test/fixtures/fixture-to-page.mjs
+ *
+ *   1. Serve it in a DEBUG-built app that embeds this plugin, and take its map.
+ *      With oshun's light table:
+ *
+ *        oshun lightbox open-file "$PWD/test/fixtures/accessible-name-page.html"
+ *        oshun lightbox tabs                      # ⛔ READ THE LABEL IT PRINTS
  *        oshun lightbox inspect <label> map > /tmp/map.json
  *
  *   2. Judge it:            node test/live-check.mjs /tmp/map.json
  *   3. Distrust it first:   node test/live-check.mjs /tmp/map.json --self-check
+ *
+ * ⛔ NEVER hard-code a tab label. It is assigned at open time and it MOVES —
+ * `lightbox-0` one run, `lightbox-3` the next. A command sent to a stale label
+ * answers `Webview not found` and, if nobody reads that line, the NEXT measurement
+ * silently describes the wrong thing. ⚔ Measured twice on 2026-08-16, and a third
+ * time on 2026-08-17 when a hand was mandated against a label that no longer
+ * existed. `oshun lightbox tabs` is the only source of truth for it.
+ *
+ * ⚠ Steps 0 and 1 were WRONG here until 2026-08-17: this header named
+ * `accessible-name-cases.html`, a file that has never existed, and it skipped the
+ * generation step entirely. Anyone following the instructions to the letter got an
+ * ENOENT. Found by independent falsification, in a file whose whole purpose is to
+ * stop people trusting things nobody executed.
  *
  * ⛔ IT REFUSES TO JUDGE A MAP IT CANNOT IDENTIFY. The probe stamps its own text
  * fingerprint into every map; this runner compares it to the `probe.js` sitting
