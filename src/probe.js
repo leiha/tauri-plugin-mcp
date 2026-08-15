@@ -52,7 +52,7 @@
      * not a verdict.
      * ⚠ Maintained by `node test/fingerprint.mjs --write`; never edit by hand.
      */
-    var PROBE_FINGERPRINT = '42d810e3714d';
+    var PROBE_FINGERPRINT = 'aa593c6ebfe6';
 
     var consoleLog = [];
     var networkLog = [];
@@ -446,11 +446,51 @@
         return false;
     }
 
+    /**
+     * ⛔ MAKES A VALUE SAFE TO SEND BACK — and this is not cosmetic.
+     *
+     * ⚔ MEASURED 2026-08-16, by the very harness built to judge the selector: a
+     * page carrying ONE element whose name held a lone surrogate made the WHOLE map
+     * unreadable — « unexpected end of hex escape at line 1 column 5495 ». Not that
+     * element: the entire answer, for every other element on the page. Removing the
+     * offending cases made the same map parse instantly.
+     *
+     * A lone surrogate is not valid text. It cannot survive the reply channel, and
+     * a NUL is meaningless in a name. The map's job is to DESCRIBE the page, so it
+     * substitutes U+FFFD — the standard « something was here and it was not text » —
+     * exactly as any robust decoder does. The composing path is untouched: the
+     * selector is built from `raw`, which never leaves the page.
+     *
+     * ⭐ The general shape is worth keeping: one poisoned element must never cost
+     * the whole answer. An observer that loses the page because one node is odd is
+     * not an observer.
+     */
+    function sanitizeForTransport(text) {
+        var out = '';
+        for (var i = 0; i < text.length; i++) {
+            var code = text.charCodeAt(i);
+            if (code === 0) { out += '\ufffd'; continue; }
+            if (isHighSurrogate(code)) {
+                if (isLowSurrogate(text.charCodeAt(i + 1))) {
+                    out += text.charAt(i) + text.charAt(i + 1);
+                    i++;
+                    continue;
+                }
+                out += '\ufffd';
+                continue;
+            }
+            if (isLowSurrogate(code)) { out += '\ufffd'; continue; }
+            out += text.charAt(i);
+        }
+        return out;
+    }
+
     function bounded(raw, from) {
         var display = String(raw).replace(/\s+/g, ' ').trim();
         if (!display || !hasNameSubstance(display)) return null;
         return {
-            value: display.slice(0, NAME_BOUND),
+            // Sanitised: a lone surrogate here costs the WHOLE map, not this row.
+            value: sanitizeForTransport(display.slice(0, NAME_BOUND)),
             from: from,
             // Whether the DISPLAYED value was cut — never how many elements the map
             // omitted (`truncatedByLimit` / `skippedInvisible` answer that), and
@@ -662,7 +702,8 @@
             name: el.getAttribute ? el.getAttribute('name') : null,
             type: el.getAttribute ? el.getAttribute('type') : null,
             classes: el.className && el.className.baseVal === undefined ? String(el.className) : null,
-            text: (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80),
+            text: sanitizeForTransport(
+                (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80)),
             // The last handle left when `id`, `name` and `text` are all empty — see
             // `accessibleName` for the measurement that put it here. Flattened into
             // two fields rather than a nested object, so it reads like every other
@@ -845,7 +886,7 @@
                 continue;
             }
             var d = describeElement(el);
-            d.value = el.value === undefined ? null : String(el.value).slice(0, 80);
+            d.value = el.value === undefined ? null : sanitizeForTransport(String(el.value).slice(0, 80));
             d.href = el.getAttribute ? el.getAttribute('href') : null;
             d.disabled = !!el.disabled;
             out.push(d);

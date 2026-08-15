@@ -87,6 +87,7 @@ function liftNaming() {
     liftFunction(text, 'isHighSurrogate'),
     liftFunction(text, 'isLowSurrogate'),
     liftFunction(text, 'hasNameSubstance'),
+    liftFunction(text, 'sanitizeForTransport'),
     liftFunction(text, 'bounded'),
     liftFunction(text, 'escapeAttributeValue'),
     liftFunction(text, 'composablePrefix'),
@@ -411,4 +412,36 @@ test('the selector bound is exact AT the boundary, not merely near it', () => {
     `[title^="${'y'.repeat(SELECTOR_BOUND)}"]`,
     'one character more must switch to a prefix',
   );
+});
+
+
+/**
+ * ⭐ ONE POISONED ELEMENT MUST NEVER COST THE WHOLE ANSWER.
+ *
+ * ⚔ MEASURED 2026-08-16 — and found by the live harness built to judge the
+ * selector, not by reasoning: a page carrying ONE element whose name held a lone
+ * surrogate made the ENTIRE map unreadable across the reply channel
+ * (« unexpected end of hex escape at line 1 column 5495 »). Not that row — every
+ * row, for the whole page. Dropping the offending cases made the same map parse.
+ *
+ * ⚠ An earlier analysis had concluded « the channel holds », having tested
+ * `JSON.stringify` and `encodeURIComponent` in isolation. The real path said
+ * otherwise. A negative on a component is not a negative on the system.
+ */
+test('a lone surrogate in a NAME cannot poison the whole map', () => {
+  const { accessibleName } = liftNaming()(NO_DOCUMENT);
+  const REPLACEMENT = '�';
+
+  const lone = accessibleName(element({ 'aria-label': 'avant \uD83D apres' }));
+  assert.equal(lone.value, `avant ${REPLACEMENT} apres`, 'a lone half becomes U+FFFD');
+  assert.ok(!/[\uD800-\uDFFF]/.test(lone.value) || /💾/.test(lone.value));
+
+  // ⛔ A well-formed pair must survive untouched — sanitising must not eat emoji.
+  const pair = accessibleName(element({ 'aria-label': 'ok \u{1F4BE} fin' }));
+  assert.equal(pair.value, 'ok \u{1F4BE} fin');
+
+  // ⚠ `raw` is NOT sanitised: it never leaves the page, and the selector is
+  // composed from it. Sanitising it would corrupt the very thing that must match.
+  assert.equal(pair.raw, 'ok \u{1F4BE} fin');
+  assert.equal(lone.raw, 'avant \uD83D apres', 'raw keeps the page verbatim');
 });
