@@ -33,6 +33,15 @@
  *
  * ⛔ The hash is computed over the file with its own stamp line NEUTRALISED —
  * otherwise writing the hash would change the hash it is supposed to describe.
+ *
+ * ⚠ IT COVERS COMMENTS TOO, AND THAT IS DELIBERATE THOUGH IT SURPRISES: editing a
+ * single doc-comment in probe.js changes the fingerprint, so `live-check.mjs` will
+ * refuse every running binary until the app is REBUILT. That is not overzealous —
+ * the binary genuinely no longer carries the text you are judging against, and the
+ * whole point is to never validate a text you did not verify. Hashing "only the
+ * code" would mean parsing JavaScript to decide what a comment is, and would let a
+ * changed CONTRACT written in prose slip through unnoticed.
+ * ⇒ Expect one rebuild after touching this file, comment or not.
  */
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';

@@ -52,7 +52,7 @@
      * not a verdict.
      * ⚠ Maintained by `node test/fingerprint.mjs --write`; never edit by hand.
      */
-    var PROBE_FINGERPRINT = 'aa593c6ebfe6';
+    var PROBE_FINGERPRINT = 'f5d14a5d5e75';
 
     var consoleLog = [];
     var networkLog = [];
@@ -495,9 +495,21 @@
             // Whether the DISPLAYED value was cut — never how many elements the map
             // omitted (`truncatedByLimit` / `skippedInvisible` answer that), and
             // never whether the SELECTOR was shortened (that is decided on `raw`).
-            // FOUR different truncations live in this file; confusing any two of
-            // them is how both rounds of this defect happened, and how the map's
-            // old single `truncated` field came to mean two things at once.
+            //
+            // ⛔ THE RUNNING COUNT, kept honest because every round of this defect
+            // came from confusing two of these. There are now FIVE derivations of
+            // one attribute value, and they are NOT interchangeable:
+            //   ① `raw`              the attribute verbatim — COMPOSES the selector
+            //   ② whitespace-collapse + trim  → readability only
+            //   ③ NAME_BOUND (80)    → what the map DISPLAYS (`truncated` says so)
+            //   ④ SELECTOR_BOUND (200) + composability → what the selector CARRIES
+            //   ⑤ transport sanitising → U+FFFD for what the channel cannot send
+            // ⚠ ⑤ IS THE YOUNGEST AND THE LEAST OBVIOUS: since it landed,
+            // `accessibleName` no longer says exactly what the page holds — it says
+            // a transport-safe rendering of it. That is the right trade (one bad
+            // node must not cost the whole map) but it is a NEW divergence between
+            // the displayed name and the DOM, and it is where the next defect will
+            // be paid. Flagged by the falsification hand rather than discovered.
             truncated: display.length > NAME_BOUND,
             raw: String(raw)
         };

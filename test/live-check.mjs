@@ -39,6 +39,19 @@
  * ⛔ It takes a map rather than driving an app ITSELF, deliberately: the plugin
  * must not grow a dependency on any one application to test itself.
  *
+ * ⭐ AND IT MUST GO THROUGH THE ORDINARY PATH — `inspect map`, the command a caller
+ * actually runs. This is the sharpest lesson of the whole episode, and it comes
+ * from the falsification hand's post-mortem of her OWN instrument: every probe she
+ * wrote reported characters as HEX CODES, because that is the natural gesture when
+ * hunting invisible characters. Hex is precisely what neutralises the payload that
+ * broke the channel. ⚔ Her tooling therefore removed from the wire the one thing
+ * that broke it, and her component test faithfully reproduced that blind spot —
+ * confirming a bias instead of exposing it. The defect surfaced the second someone
+ * ran the ORDINARY command.
+ * ⇒ Instrumenting to observe removes from the path the thing you are observing.
+ * A judge that reaches the page through its own special channel is measuring its
+ * own channel.
+ *
  * Exit 0 = every expectation held. Exit 1 = at least one did not, each named.
  * Exit 2 = it refused to judge, and says why.
  */
