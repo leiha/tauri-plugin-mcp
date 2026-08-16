@@ -204,6 +204,26 @@ test('the DISPLAY bound never orphans a surrogate — a character absent from th
   assert.equal(bounded.truncated, true);
 });
 
+test('a lone surrogate the bound never touched is NOT silently dropped', () => {
+  // ⚔ THE DEFECT THE FIRST VERSION OF THIS GUARD INTRODUCED, found 2026-08-16 by an
+  // independent attack. It stepped back on ANY trailing high surrogate, cut or not —
+  // so a four-unit string ending in a lone high surrogate came back as `value: "abc"`,
+  // `length: 4`, `truncated: FALSE`: a character dropped in silence, under a flag
+  // stating that nothing had been. A guard against a lie that told one of its own.
+  const { boundedField } = liftNaming()(NO_DOCUMENT);
+
+  const lone = `abc${String.fromCharCode(0xd83d)}`;
+  assert.equal(lone.length, 4, 'the witness must be well under the bound to test anything');
+
+  const bounded = boundedField(lone, true);
+
+  assert.equal(bounded.length, 4);
+  assert.equal(bounded.truncated, false);
+  // The character is still SANITISED — it is genuinely unpaired page content — but the
+  // field must not lose a position, because nothing was cut.
+  assert.equal(bounded.value.length, 4, 'a character was dropped although the bound never cut');
+});
+
 test('the DISPLAY bound still cuts at exactly 80 when nothing straddles it', () => {
   // ⛔ THE NEGATIVE HALF, without which the test above proves nothing: a guard that
   // always stepped back would satisfy it and silently shorten every bounded field by

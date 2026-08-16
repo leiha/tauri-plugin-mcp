@@ -52,7 +52,7 @@
      * not a verdict.
      * ⚠ Maintained by `node test/fingerprint.mjs --write`; never edit by hand.
      */
-    var PROBE_FINGERPRINT = 'e69c07060d8e';
+    var PROBE_FINGERPRINT = '32b2bf42343c';
 
     var consoleLog = [];
     var networkLog = [];
@@ -564,7 +564,16 @@
         // protection had been judged necessary once and was simply not carried over.
         // Stepping back shortens the shown field to 79 units, which is correct: it is
         // still a prefix, and `length`/`truncated` still say what was cut.
-        if (isHighSurrogate(shown.charCodeAt(shown.length - 1))) {
+        // ⛔ ONLY WHEN THE BOUND ACTUALLY CUT. The first version of this guard stepped
+        // back on ANY trailing high surrogate, cut or not — so `"abc" + U+D83D`, four
+        // units long and never touched by the bound, came back as `value: "abc"`,
+        // `length: 4`, `truncated: FALSE`. A character silently dropped, under a flag
+        // saying nothing was. ⚔ Found 2026-08-16 by an independent attack on this
+        // repair: a guard against a lie that told one of its own.
+        // ⚠ A lone high surrogate that the bound did NOT cut is the page's own content
+        // — `sanitizeForTransport` still replaces it, which is the right answer: it is
+        // genuinely unpaired, and `truncated: false` is then TRUE.
+        if (text.length > NAME_BOUND && isHighSurrogate(shown.charCodeAt(shown.length - 1))) {
             shown = shown.slice(0, shown.length - 1);
         }
         return {
