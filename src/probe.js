@@ -52,7 +52,7 @@
      * not a verdict.
      * ⚠ Maintained by `node test/fingerprint.mjs --write`; never edit by hand.
      */
-    var PROBE_FINGERPRINT = 'ea429434b004';
+    var PROBE_FINGERPRINT = '513f2e3a08ae';
 
     var consoleLog = [];
     var networkLog = [];
@@ -944,6 +944,34 @@
      * only: a full DOM dump is `inspect_dom`, and it is usually too large to reason
      * about.
      */
+    /**
+     * Whether a control holds a secret that must never leave the page.
+     *
+     * ⛔ A MAP IS A PASSIVE SWEEP, AND THAT IS THE WHOLE PROBLEM. Nobody asks for a
+     * particular field: a caller asks "what is on this page?" and receives every value
+     * on it. On an authenticated third-party page that meant the password came back in
+     * clear text, into an agent's context and from there into transcripts and logs —
+     * copied by a reader who never asked for it and cannot unsee it.
+     * ⚠ MEASURED 2026-08-16: a canary page returned `type: "password"` next to
+     * `value: "SUPERSECRET-CANARY-9931"`, with no exception anywhere in `map()`.
+     *
+     * ⭐ `inspect_fill` deliberately keeps returning the value it read back: there the
+     * caller SUPPLIED the secret one call earlier, so echoing it discloses nothing, and
+     * `accepted` would be unverifiable without it. The asymmetry is the point — a sweep
+     * discloses, an echo does not.
+     *
+     * The `autocomplete` cases matter because a one-time code or a password manager
+     * field is routinely `type="text"`: typing alone would miss them. Over-redacting a
+     * field costs a caller one `inspect_eval`; under-redacting one leaks a secret
+     * forever. The asymmetry decides the doubt.
+     */
+    function isSecretField(el) {
+        if (!el || !el.getAttribute) return false;
+        if (String(el.type || '').toLowerCase() === 'password') return true;
+        var hint = String(el.getAttribute('autocomplete') || '').toLowerCase();
+        return hint.indexOf('password') !== -1 || hint.indexOf('one-time-code') !== -1;
+    }
+
     function map(options) {
         options = options || {};
         var limit = options.limit || 200;
@@ -963,10 +991,18 @@
             // ⛔ NOT normalised — this is the working payload of a control, and the
             // gesture that reads it back is « I just filled this, did it take? ».
             // Collapsing its blanks would make a correct answer look wrong.
-            var valueField = el.value === undefined ? null : boundedField(el.value, false);
+            // ⛔ A REDACTED FIELD MUST NOT LOOK LIKE AN EMPTY ONE. `value: null` alone
+            // is what a button returns; a reader would take the password field for
+            // having no value and go looking for it elsewhere. `valueRedacted` is what
+            // says "there IS a value here, and it is deliberately not shown to you".
+            // Its LENGTH is withheld too — a password's length is itself a secret.
+            var secret = isSecretField(el);
+            var valueField =
+                el.value === undefined || secret ? null : boundedField(el.value, false);
             d.value = valueField ? valueField.value : null;
             d.valueLength = valueField ? valueField.length : null;
             d.valueTruncated = valueField ? valueField.truncated : null;
+            d.valueRedacted = secret;
             d.href = el.getAttribute ? el.getAttribute('href') : null;
             d.disabled = !!el.disabled;
             out.push(d);
