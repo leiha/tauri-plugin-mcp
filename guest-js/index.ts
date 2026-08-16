@@ -547,6 +547,14 @@ interface PageMapElement {
     name?: string;
     id?: string;
     value?: string;
+    /**
+     * True when this control holds a secret and its content was WITHHELD.
+     *
+     * ⛔ Distinguishes "withheld" from "empty". `value` merely absent is what an
+     * empty field looks like, so a reader would take the password box for blank and
+     * go looking for the value somewhere else — turning a redaction into a hunt.
+     */
+    valueRedacted?: boolean;
     checked?: boolean;
     disabled?: boolean;
     options?: string[];
@@ -787,7 +795,40 @@ function buildContextLabel(el: Element): string {
     return label;
 }
 
+/**
+ * Whether a control holds a secret that must never leave the page.
+ *
+ * ⛔ THIS FILE HAD NO NOTION OF A SECRET AT ALL, AND IT IS THE "PREFERRED" PATH.
+ * `query_page mode:'map'` goes through here — a completely different code path from
+ * the universal probe — and it published the TYPED value of a password field twice
+ * over, through `value` AND through `text`, with `type: "password"` sitting right
+ * beside it. That is worse than every leak repaired on the other path: those only
+ * ever exposed what was already written in the page source, this one exposes what
+ * the user actually typed.
+ * ⚠ MEASURED 2026-08-16 by an independent attack, on a live application, after the
+ * other path had been declared closed. *Repairing one door does not close a house:
+ * the same question has to be asked of every entrance.*
+ *
+ * ⭐ Kept in step with `isSecretField` in `src/probe.js` — same tokens, same reasons.
+ * The two paths are separate by construction (this one needs the page's own bundle,
+ * the other works on any page), so the rule is stated twice on purpose rather than
+ * shared through an import that neither can make.
+ */
+function holdsSecret(el: Element): boolean {
+    const type = String((el as HTMLInputElement).type || '').toLowerCase();
+    if (type === 'password') return true;
+    const hint = String(el.getAttribute('autocomplete') || '').toLowerCase();
+    return ['password', 'one-time-code', 'cc-number', 'cc-csc', 'cc-exp'].some((token) =>
+        hint.includes(token),
+    );
+}
+
 function getElementText(el: Element): string {
+    // ⛔ A secret is not a label. Returning it here published it under `text`, which
+    // is the field a reader scans FIRST to know what a control is.
+    if (holdsSecret(el)) {
+        return (el as HTMLInputElement).placeholder || '';
+    }
     // For inputs, return value or placeholder
     if (el instanceof HTMLInputElement) {
         return el.value || el.placeholder || '';
@@ -848,10 +889,15 @@ function buildPageMapEntry(el: Element, interactiveOnly: boolean): PageMapElemen
     // Mark non-interactive elements explicitly
     if (!interactive) entry.interactive = false;
 
+    // ⛔ A MAP IS A PASSIVE SWEEP: nobody asked for this value. On a secret control
+    // the value is withheld — and `valueRedacted` says so, because `value` simply
+    // ABSENT would read as "this field is empty" and send a reader hunting elsewhere.
+    const secret = holdsSecret(el);
     // Type for inputs
     if (el instanceof HTMLInputElement) {
         entry.type = el.type;
-        if (el.value) entry.value = el.value.substring(0, 100);
+        if (secret) entry.valueRedacted = true;
+        else if (el.value) entry.value = el.value.substring(0, 100);
         if (el.placeholder) entry.placeholder = el.placeholder;
         if (el.name) entry.name = el.name;
         if (el.type === 'checkbox' || el.type === 'radio') {
@@ -860,7 +906,8 @@ function buildPageMapEntry(el: Element, interactiveOnly: boolean): PageMapElemen
         if (el.disabled) entry.disabled = true;
     } else if (el instanceof HTMLTextAreaElement) {
         entry.type = 'textarea';
-        if (el.value) entry.value = el.value.substring(0, 100);
+        if (secret) entry.valueRedacted = true;
+        else if (el.value) entry.value = el.value.substring(0, 100);
         if (el.placeholder) entry.placeholder = el.placeholder;
         if (el.name) entry.name = el.name;
         if (el.disabled) entry.disabled = true;
