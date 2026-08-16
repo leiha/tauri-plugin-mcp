@@ -52,7 +52,7 @@
      * not a verdict.
      * ⚠ Maintained by `node test/fingerprint.mjs --write`; never edit by hand.
      */
-    var PROBE_FINGERPRINT = '513f2e3a08ae';
+    var PROBE_FINGERPRINT = '1d63aa475d21';
 
     var consoleLog = [];
     var networkLog = [];
@@ -960,16 +960,37 @@
      * `accepted` would be unverifiable without it. The asymmetry is the point — a sweep
      * discloses, an echo does not.
      *
-     * The `autocomplete` cases matter because a one-time code or a password manager
-     * field is routinely `type="text"`: typing alone would miss them. Over-redacting a
-     * field costs a caller one `inspect_eval`; under-redacting one leaks a secret
-     * forever. The asymmetry decides the doubt.
+     * The `autocomplete` cases matter because a one-time code, a card number or a
+     * password-manager field is routinely `type="text"`: typing alone would miss them.
+     * Over-redacting a field costs a caller one `inspect_eval`; under-redacting one
+     * leaks a secret forever. The asymmetry decides the doubt.
+     *
+     * ⭐ THE TOKENS ARE THE HTML SPEC'S OWN, NOT A GUESS. `autocomplete` has a closed,
+     * normative vocabulary, so this list can be justified rather than invented — which
+     * is the only reason it is allowed to grow. `cc-exp` is a prefix on purpose: it
+     * covers `cc-exp-month` and `cc-exp-year` without naming them.
+     * ⚠ The card tokens were added on 2026-08-16 after an independent attack observed
+     * that the first version stopped at passwords. The page that motivated all of this
+     * is a booking dashboard showing settled payments — card fields are not a
+     * hypothetical there.
+     *
+     * ⛔ WHAT THIS DELIBERATELY DOES NOT CATCH, so nobody reads it as exhaustive:
+     * `<input type="text" name="password">` and friends. Matching on `name`/`id`
+     * substrings is a guess, not a contract — `name="password-hint"` and
+     * `name="password-strength-meter"` are ordinary readable fields, and a redaction
+     * that fires on a guess teaches callers to distrust the flag. A page that carries a
+     * secret in a plain text field with no `autocomplete` is asking every password
+     * manager in the world to miss it too. Left open, and stated.
      */
     function isSecretField(el) {
         if (!el || !el.getAttribute) return false;
         if (String(el.type || '').toLowerCase() === 'password') return true;
         var hint = String(el.getAttribute('autocomplete') || '').toLowerCase();
-        return hint.indexOf('password') !== -1 || hint.indexOf('one-time-code') !== -1;
+        var SECRET_TOKENS = ['password', 'one-time-code', 'cc-number', 'cc-csc', 'cc-exp'];
+        for (var s = 0; s < SECRET_TOKENS.length; s++) {
+            if (hint.indexOf(SECRET_TOKENS[s]) !== -1) return true;
+        }
+        return false;
     }
 
     function map(options) {

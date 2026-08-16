@@ -88,6 +88,37 @@ test('a secret hides behind type=text, and autocomplete is the only tell', () =>
   assert.equal(isSecretField(control('text', 'section-blue billing new-password')), true);
 });
 
+test('card fields are secrets too — the sweep does not care what KIND of secret it is', () => {
+  const isSecretField = loadIsSecretField();
+
+  // ⚠ Added 2026-08-16 after an independent attack observed the first version stopped
+  // at passwords. The page that motivated this whole repair is a booking dashboard
+  // showing settled payments — card fields are not hypothetical there.
+  assert.equal(isSecretField(control('text', 'cc-number')), true);
+  assert.equal(isSecretField(control('text', 'cc-csc')), true);
+  assert.equal(isSecretField(control('text', 'cc-exp')), true);
+  // `cc-exp` is a prefix on purpose, so the two dated variants need no naming.
+  assert.equal(isSecretField(control('text', 'cc-exp-month')), true);
+  assert.equal(isSecretField(control('text', 'cc-exp-year')), true);
+  assert.equal(isSecretField(control('text', 'section-pay shipping cc-number')), true);
+});
+
+test('what redaction does NOT claim to catch — stated, so it is not mistaken for coverage', () => {
+  const isSecretField = loadIsSecretField();
+
+  // ⛔ NOT A BUG, A BORDER. Matching `name`/`id` substrings is a guess, not a contract:
+  // `password-hint` and `password-strength-meter` are ordinary readable fields, and a
+  // flag that fires on a guess teaches callers to distrust it. This test exists so the
+  // gap is DELIBERATE and visible, rather than discovered later as an oversight. If it
+  // ever goes red, someone widened the rule — make sure they meant to.
+  assert.equal(isSecretField(control('text', null)), false);
+  assert.equal(
+    isSecretField({ type: 'text', name: 'password', getAttribute: () => null }),
+    false,
+    'a plain text field named "password" is NOT redacted — see the note in probe.js',
+  );
+});
+
 test('ordinary controls stay readable — over-redacting blinds the caller', () => {
   const isSecretField = loadIsSecretField();
 
