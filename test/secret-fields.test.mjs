@@ -140,6 +140,40 @@ test('a malformed element is not a crash — an observer must never break its su
   assert.equal(isSecretField({}), false);
 });
 
+test('the secret does not escape by `text` either — a textarea IS its own value', () => {
+  // ⚔ THE HOLE AN INDEPENDENT ATTACK FOUND IN THIS VERY REPAIR, hours after it
+  // shipped. `<textarea autocomplete="one-time-code">SECRET</textarea>` came back with
+  // `value: null` and `valueRedacted: true` — the guard working perfectly — and
+  // `text: "SECRET"` on the same line, because for a textarea `textContent` IS the
+  // value. Redacting one field while a neighbour publishes is not a redaction.
+  const describe = liftFunction(readFileSync(SOURCE, 'utf8'), 'describeElement');
+
+  assert.match(
+    describe,
+    /var secret = isSecretField\(el\)/,
+    '`describeElement` no longer consults the secret guard — `text` leaks again',
+  );
+  // The guard must GOVERN the text field, not merely be computed next to it.
+  // ⛔ THE FIRST VERSION OF THIS ASSERTION DID NOT BITE. It sliced the assignment
+  // with `/var textField\s*=([\s\S]*?);\n/` and looked for `secret` inside — but a
+  // trailing comment pushes the `;` off the end of its line, so the capture ran on
+  // and swallowed the guard it was supposed to be missing. Removing the guard left
+  // all nine cases GREEN. Caught by mutation, never by reading — the fourth test of
+  // the day to need it. The shape below cannot run on: it demands the ternary sit
+  // immediately before the call it is meant to bypass.
+  assert.match(
+    describe,
+    /secret\s*\n?\s*\?[\s\S]{0,160}boundedField\(el\.innerText/,
+    '`describeElement` builds `text` without consulting the guard — a textarea would leak',
+  );
+  // And the flag must live here, so EVERY surface carries it — not only `map()`.
+  assert.match(
+    describe,
+    /valueRedacted: secret/,
+    'the redaction flag left the shared descriptor — click/fill would publish silently',
+  );
+});
+
 test('map() actually CONSULTS the predicate — keeping it unused would leak just as much', () => {
   // ⛔ The predicate can be perfect and the leak remain: the defect was never in
   // knowing what a password is, it was in copying values without asking. This pins

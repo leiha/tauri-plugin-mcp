@@ -58,6 +58,20 @@
  * ⛔ It takes a map rather than driving an app ITSELF, deliberately: the plugin
  * must not grow a dependency on any one application to test itself.
  *
+ * ⛔ AND IT JUDGES `map` ALONE — no other surface of the bridge is judged by
+ * anything, here or elsewhere. `loadMap` expects an object carrying `.elements`,
+ * and both judges iterate it; `inspect_click`, `inspect_fill`, `inspect_press` and
+ * `inspect_wait` answer with their own descriptors (`clicked`, `filled`,
+ * `activeAfter`) that NOTHING in this file reads.
+ * ⚠ Read that boundary precisely, because it is not where it looks. Those surfaces
+ * go through the same `describeElement`, so the six naming fields do travel with
+ * them and a naming regression would surface here. But `value`, `valueLength`,
+ * `valueTruncated` and `valueRedacted` are attached by `map()` itself and exist on
+ * NO other surface — a leak or a bad cut confined to `fill` would leave this file
+ * green. Extending the judge to a `clicked`/`filled` object is real work and has
+ * not been done; saying so is cheaper than letting « the harness is green » be read
+ * as « the bridge is green ».
+ *
  * ⭐ AND IT MUST GO THROUGH THE ORDINARY PATH — `inspect map`, the command a caller
  * actually runs. This is the sharpest lesson of the whole episode, and it comes
  * from the falsification hand's post-mortem of her OWN instrument: every probe she
@@ -122,12 +136,33 @@ function readFixture() {
   return fixture;
 }
 
+/**
+ * Every key `judge()` knows how to read — and the list exists so that a key it does
+ * NOT know cannot be written.
+ *
+ * ⚔ MEASURED 2026-08-16 by independent falsification: `tagQualified` had been
+ * carried by two SVG cases, with an explicit intent, and was read by NOBODY. The
+ * asymmetry was the whole defect — `loadBoundedFieldCases` threw on an unknown key
+ * from its first day, `loadFixture` validated nothing at all, so the neighbouring
+ * family got the silence the other one had been protected from. A guard that exists
+ * for one family and not for its neighbour is the shape this harness keeps failing
+ * in; the fixture reads as if it asserted something, and it asserted nothing.
+ */
+const SELECTOR_EXPECT_KEYS = new Set(['operator', 'resolution', 'tagQualified']);
+
 function loadFixture(fixture) {
   const cases = [
     ...(fixture.attributeCases || []),
     ...(fixture.wrapperCases || []),
     ...(fixture.parsedCases || []),
   ];
+  for (const c of cases) {
+    for (const key of Object.keys(c.expect || {})) {
+      if (!SELECTOR_EXPECT_KEYS.has(key)) {
+        throw new Error(`fixture case ${c.id} expects unknown key \`${key}\` — a silently ignored expectation is worse than none`);
+      }
+    }
+  }
   return new Map(cases.map((c) => [c.id, c]));
 }
 
@@ -156,15 +191,51 @@ const BOUNDED_FIELD_OF = {
   valueEquals: 'value',
   valueLength: 'valueLength',
   valueTruncated: 'valueTruncated',
+  valueRedacted: 'valueRedacted',
+  accessibleNameEquals: 'accessibleName',
+  // ⛔ WHICH ATTRIBUTE WON, and it is the field the published contract tells every
+  // consumer to read rather than assume (« lis `accessibleNameFrom` plutôt que de
+  // supposer la source »). The resolution order changed on 2026-08-16 — `title` now
+  // precedes `placeholder`, per HTML-AAM §4.1.1 — and nothing live watched the order
+  // at all: a case can assert the NAME and still be blind to WHERE it came from,
+  // because two attributes carrying the same string produce the same name.
+  accessibleNameFromEquals: 'accessibleNameFrom',
   accessibleNameLength: 'accessibleNameLength',
   accessibleNameTruncated: 'accessibleNameTruncated',
 };
+
+/**
+ * ⭐ THE THIRD CONTRACT — a value the map does not carry as a field, and the only
+ * way to see WHICH UNIT the cut counts in.
+ *
+ * ⚔ MEASURED 2026-08-16, and it is the sharpest of the six blind spots: a
+ * `boundedField` cutting in CODE POINTS instead of UTF-16 units still reports
+ * `textLength: 200` and `textTruncated: true` — every field the fixture watched
+ * stayed exactly right — while the field it HANDS BACK silently grew from 80 units
+ * to 160. The 80-unit display bound is the entire reason this cluster exists
+ * (« keeps a 200-element map readable » under a 64 KB transport ceiling), and it
+ * could double without one expectation moving.
+ * ⛔ So the length of the SHOWN text is asserted directly. It cannot be asserted as
+ * a string: the fixture's `expect` block is deliberately ASCII-literal-only, so no
+ * decoder has to exist twice, and these cases are made of emoji.
+ * ⚠ The emission check still runs on the underlying field — an absent `text` is an
+ * emission defect here exactly as it is above, never a length of zero.
+ */
+const BOUNDED_DERIVED_OF = {
+  textShownLength: { field: 'text', read: (v) => (v === null ? null : String(v).length) },
+};
+
+/** The map field an expectation ultimately reads — direct or derived. */
+function fieldOfExpectKey(key) {
+  if (BOUNDED_FIELD_OF[key]) return BOUNDED_FIELD_OF[key];
+  return BOUNDED_DERIVED_OF[key] ? BOUNDED_DERIVED_OF[key].field : null;
+}
 
 function loadBoundedFieldCases(fixture) {
   const cases = fixture.boundedFieldCases || [];
   for (const c of cases) {
     for (const key of Object.keys(c.expect || {})) {
-      if (!BOUNDED_FIELD_OF[key]) {
+      if (!fieldOfExpectKey(key)) {
         throw new Error(`fixture case ${c.id} expects unknown key \`${key}\` — a silently ignored expectation is worse than none`);
       }
     }
@@ -178,9 +249,10 @@ function judgeBoundedFields(map, cases) {
     const expected = cases.get(element.id);
     if (!expected) continue;
     for (const [key, want] of Object.entries(expected.expect || {})) {
-      const field = BOUNDED_FIELD_OF[key];
+      const derived = BOUNDED_DERIVED_OF[key];
+      const field = fieldOfExpectKey(key);
       const fail = (got) => failures.push({
-        id: `${element.id} · ${field}`,
+        id: `${element.id} · ${derived ? `${key} (over \`${field}\`)` : field}`,
         expected: JSON.stringify(want),
         got,
         selector: null,
@@ -191,7 +263,8 @@ function judgeBoundedFields(map, cases) {
         fail(`the map does not carry \`${field}\` AT ALL — an emission defect, not a wrong value`);
         continue;
       }
-      if (element[field] !== want) fail(JSON.stringify(element[field]));
+      const got = derived ? derived.read(element[field]) : element[field];
+      if (got !== want) fail(JSON.stringify(got));
     }
   }
   return failures;
@@ -257,6 +330,25 @@ function judge(map, expectations) {
       fail(`${want.resolution} (${want.operator || '?'})`, 'no selector at all');
       continue;
     }
+    // ⛔ THE TAG MUST BE OMITTED ON SVG, and nothing checked it. `e-svg-a` and
+    // `e-svg-rect` have carried `tagQualified: false` with an explicit intent — SVG
+    // tag names are CASE-SENSITIVE in selectors, so a tag taken from `el.tagName`
+    // would compose `RECT[...]` and resolve to nothing.
+    // ⚔ MEASURED 2026-08-16: both SVG selectors replaced by the tag-qualified form
+    // the intent forbids, and the run stayed « every expectation held », exit 0.
+    // ⚠ `resolution: unique` does NOT rescue this. Lower-case `a` and `rect` still
+    // match their own SVG element, so the count stays 1 and nothing moves; the case
+    // that would break is a camel-cased tag such as `linearGradient`, and the
+    // corpus carries none. Judging the SHAPE is therefore the only guard available.
+    if (Object.prototype.hasOwnProperty.call(want, 'tagQualified')) {
+      const qualified = !selector.startsWith('[');
+      if (qualified !== want.tagQualified) {
+        fail(
+          want.tagQualified ? 'a tag-qualified selector' : 'NO tag qualification (SVG tag names are case-sensitive)',
+          `selector ${JSON.stringify(selector)}`);
+        continue;
+      }
+    }
     const operator = selector.includes('^="') ? '^=' : '=';
     if (want.operator && operator !== want.operator) {
       fail(`operator ${want.operator}`, `operator ${operator}`);
@@ -319,7 +411,7 @@ function selfCheck(map, expectations, boundedCases) {
    * NO TARGET, never as a pass.
    */
   const pickWatching = (m, expectKey, predicate = () => true) => {
-    const field = BOUNDED_FIELD_OF[expectKey];
+    const field = fieldOfExpectKey(expectKey);
     return pick(m.elements.filter((e) => {
       const c = boundedCases.get(e.id);
       return c
@@ -363,6 +455,53 @@ function selfCheck(map, expectations, boundedCases) {
     mutate('a length off by one', true, (m) => {
       const target = pickWatching(m, 'textLength', (e) => typeof e.textLength === 'number');
       if (target) target.textLength += 1;
+      return target;
+    }),
+    // ⛔ THE THREE BELOW EXIST BECAUSE THE PROOF COVERED HALF THE CLAIM. The list
+    // above damages `textTruncated`, `valueLength` and `textLength` and stops there,
+    // while the contract has SIX bounded fields. `judgeBoundedFields` is generic over
+    // `BOUNDED_FIELD_OF`, so the ability to go red does transport — but transporting
+    // is an inference, and this file's whole promise is that it does not infer. ⚠ It
+    // is mechanism 8 of `docs/explanation/pourquoi-un-instrument-de-verification-ment.md`
+    // to the letter: the calibration is CORRECT and INCOMPLETE, which reads exactly
+    // like a complete one.
+    mutate('a value truncation flag flipped', true, (m) => {
+      const target = pickWatching(m, 'valueTruncated', (e) => e.valueTruncated === true);
+      if (target) target.valueTruncated = false;
+      return target;
+    }),
+    mutate('a name length off by one', true, (m) => {
+      const target = pickWatching(m, 'accessibleNameLength', (e) => typeof e.accessibleNameLength === 'number');
+      if (target) target.accessibleNameLength += 1;
+      return target;
+    }),
+    mutate('a name taken from the wrong attribute', true, (m) => {
+      const target = pickWatching(m, 'accessibleNameFromEquals', (e) => e.accessibleNameFrom === 'title');
+      if (target) target.accessibleNameFrom = 'placeholder';
+      return target;
+    }),
+    mutate('a name truncation flag flipped', true, (m) => {
+      const target = pickWatching(m, 'accessibleNameTruncated', (e) => e.accessibleNameTruncated === true);
+      if (target) target.accessibleNameTruncated = false;
+      return target;
+    }),
+    // ⭐ THE LEAK REOPENED, in the exact shape it had: the value comes back and the
+    // flag stops saying it was withheld. A redaction nobody can see regress is a
+    // redaction that lasts until the next refactor.
+    mutate('a redacted secret handed back', true, (m) => {
+      const target = pickWatching(m, 'valueRedacted', (e) => e.valueRedacted === true);
+      if (target) {
+        target.valueRedacted = false;
+        target.value = 'the-secret-is-back';
+        target.valueLength = 18;
+      }
+      return target;
+    }),
+    // ⭐ AND THE CUT THAT CHANGES UNIT WITHOUT CHANGING ONE REPORTED FIELD — the
+    // damage `textLength` and `textTruncated` are both blind to. See BOUNDED_DERIVED_OF.
+    mutate('the display cut silently doubled', true, (m) => {
+      const target = pickWatching(m, 'textShownLength', (e) => typeof e.text === 'string');
+      if (target) target.text += target.text;
       return target;
     }),
     mutate('NEUTRAL — an unrelated field added', false, (m) => {
@@ -412,8 +551,18 @@ function main() {
     console.error(`⛔ ${boundedCases.size - bounded.length} bounded-field case(s) never appeared in the map — regenerate the page (node test/fixtures/fixture-to-page.mjs) and reopen it.`);
     process.exit(2);
   }
-  if (cases.length === 0) {
-    console.error('⛔ none of the map elements is a fixture case — wrong page?');
+  // ⛔ THE SAME GUARD FOR THE SELECTOR FAMILY, and its absence made the count above
+  // a decoration. Only `cases.length === 0` used to be tested, so SEVENTY of the
+  // seventy-one could vanish and the run still printed « every expectation held »
+  // and exited 0. ⚔ MEASURED 2026-08-16: a real map amputated of 70 selector cases
+  // came back green. Every ordinary cause empties a family PARTIALLY rather than
+  // completely — a page generated before a case was added, a `visibleOnly` filter,
+  // the `limit` reached, one `querySelectorAll` clause that stops matching — so the
+  // zero test was guarding the one shape that almost never occurs.
+  if (cases.length !== expectations.size) {
+    const missing = expectations.size - cases.length;
+    const none = cases.length === 0 ? ' — NOT ONE of them did, so this is very likely the wrong page' : '';
+    console.error(`⛔ ${missing} selector case(s) never appeared in the map${none} — regenerate the page (node test/fixtures/fixture-to-page.mjs) and reopen it.`);
     process.exit(2);
   }
   if (failures.length === 0) {

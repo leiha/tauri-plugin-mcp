@@ -52,7 +52,7 @@
      * not a verdict.
      * ⚠ Maintained by `node test/fingerprint.mjs --write`; never edit by hand.
      */
-    var PROBE_FINGERPRINT = 'dd6980e001c7';
+    var PROBE_FINGERPRINT = 'e69c07060d8e';
 
     var consoleLog = [];
     var networkLog = [];
@@ -820,15 +820,37 @@
         if (!el) return null;
         var named = accessibleName(el);
         var selector = accessibleNameSelector(named, el);
+        // ⛔ A SECRET LEAKS BY `text` TOO, AND THAT HOLE WAS OPEN FOR HALF A DAY.
+        // For a `<textarea>`, `textContent` IS the value: a
+        // `<textarea autocomplete="one-time-code">SECRET</textarea>` came back with
+        // `value: null`, `valueRedacted: true` — the guard working perfectly — and
+        // `text: "SECRET"` on the SAME LINE. ⚔ Observed 2026-08-16 by an independent
+        // attack on the very repair that introduced the redaction.
+        // ⭐ It is the exact shape of the first false green of that day: INVOKING a
+        // guard is not being GOVERNED by it. The guard was called, it answered true,
+        // its verdict was emitted — and a second field published the secret beside it.
+        // ⇒ The redaction belongs HERE, in the shared descriptor, not only in `map()`:
+        // `clicked`, `filled` and `activeAfter` all pass through this function, and
+        // caviarding one surface while three others publish is not a redaction.
+        // ⚠ Honest scope: this covers the document's INITIAL content (server-side
+        // pre-fill, or a value set through `textContent`). What a user types afterwards
+        // never reaches `textContent` at all — measured.
+        var secret = isSecretField(el);
         // Normalised, because the rendered text of a control already collapses its
         // blanks — unlike `value`, which is a working payload and stays verbatim.
-        var textField = boundedField(el.innerText || el.textContent || '', true);
+        var textField = secret
+            ? { value: null, length: null, truncated: null }
+            : boundedField(el.innerText || el.textContent || '', true);
         return {
             tag: el.tagName ? el.tagName.toLowerCase() : null,
             id: el.id || null,
             name: el.getAttribute ? el.getAttribute('name') : null,
             type: el.getAttribute ? el.getAttribute('type') : null,
             classes: el.className && el.className.baseVal === undefined ? String(el.className) : null,
+            // ⛔ `valueRedacted` lives here rather than in `map()` so that EVERY surface
+            // carries it. It means "the content of this control is withheld, in every
+            // field of this line" — not merely "the `value` key was blanked".
+            valueRedacted: secret,
             text: textField.value,
             // ⛔ How long the normalised text really is, and whether `text` above is a
             // PREFIX of it. Without this pair a reader cannot distinguish « this

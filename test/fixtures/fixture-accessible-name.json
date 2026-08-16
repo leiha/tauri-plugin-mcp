@@ -1,5 +1,5 @@
 {
- "$comment": "Adversarial corpus for accessibleNameSelector. Every case was MEASURED against a live webview, never reasoned about. `expect` records the behaviour of the contract as it stands; a case marked status=known-defect records what the probe DOES today together with what it SHOULD do \u2014 freezing a defect as if it were the contract is how a golden fixture stops being a judge. | 2026-08-16, quatrieme tour : trois known-defects REPARES (d-nul-only, d-lone-low, d-lone-high-mid) \u2014 leur attente est passee a ce que `shouldBe` decrivait, PUIS mesuree. d-nul-early reste tel quel avec un desaccord argumente dans son champ `note`. Aucune attente n'a ete re-derivee du comportement courant.",
+ "$comment": "Adversarial corpus for accessibleNameSelector. Every case was MEASURED against a live webview, never reasoned about. `expect` records the behaviour of the contract as it stands; a case marked status=known-defect records what the probe DOES today together with what it SHOULD do \u2014 freezing a defect as if it were the contract is how a golden fixture stops being a judge. | 2026-08-16, quatrieme tour : trois known-defects REPARES (d-nul-only, d-lone-low, d-lone-high-mid) \u2014 leur attente est passee a ce que `shouldBe` decrivait, PUIS mesuree. d-nul-early reste tel quel avec un desaccord argumente dans son champ `note`. Aucune attente n'a ete re-derivee du comportement courant. | 2026-08-16, cinquieme tour (reparation du harnais, pas du pont) : +8 cas bornes, tous derives du contrat puis mesures, jamais l'inverse \u2014 trois hors-BMP (unite du compte, unite de la coupe, coupe qui scinde une paire), un nom a blancs redondants (normalise vs brut), quatre sur la redaction des champs secrets dont DEUX NEGATIFS. Motif de l'attaque : chaque garde existait pour une famille et manquait a sa voisine. Puis +2 sur l'ORDRE de resolution du nom (`title` avant `placeholder`, HTML-AAM \u00a74.1.1, change le 2026-08-16) et sa moitie negative \u2014 juges par `accessibleNameFrom`, champ que le contrat publie designe comme la chose a lire et que rien ne surveillait.",
  "contract": {
   "displayBound": 80,
   "selectorBound": 200,
@@ -855,7 +855,7 @@
    "status": "contract"
   }
  ],
- "boundedFieldEncoding": "Same encoding as attributeCases for the INPUT fields (`text`, `attributes.*`): the inner of a JSON string, ASCII only, runs of 20+ identical characters folded as {{c*N}}. The `expect` block is deliberately NOT encoded \u2014 numbers, booleans and short literal ASCII strings only, so no decoder has to exist twice (once in the page, once in the Node judge). A case needing a long or invisible EXPECTED string asserts on its length instead. | 2026-08-17: family added with the repair of `textLength`/`valueLength`/`accessibleNameLength`. Unlike the selector families, these expectations are DERIVED from the contract and from a length the case itself chooses \u2014 they were written BEFORE being measured, then confronted. That is why they judge rather than mirror.",
+ "boundedFieldEncoding": "Same encoding as attributeCases for the INPUT fields (`text`, `attributes.*`): the inner of a JSON string, ASCII only, runs of 20+ identical characters folded as {{c*N}}. The `expect` block is deliberately NOT encoded \u2014 numbers, booleans and short literal ASCII strings only, so no decoder has to exist twice (once in the page, once in the Node judge). A case needing a long or invisible EXPECTED string asserts on its length instead. | 2026-08-17: family added with the repair of `textLength`/`valueLength`/`accessibleNameLength`. Unlike the selector families, these expectations are DERIVED from the contract and from a length the case itself chooses \u2014 they were written BEFORE being measured, then confronted. That is why they judge rather than mirror. | 2026-08-16, reparation du harnais : le caractere replie par `{{c*N}}` peut etre une PAIRE DE SURROGATES (`{{\\\\ud83d\\\\ude00*40}}`), sans quoi 100 emoji s'ecrivent en 1200 caracteres d'echappements dans un fichier dont la regle de repliage existe pour rester lisible. Et une cl\u00e9 d'`expect` peut etre DERIVEE du champ plutot qu'egale a lui : `textShownLength` juge la longueur du champ RENDU, la seule chose qui distingue une coupe comptee en unites UTF-16 d'une coupe comptee en points de code \u2014 `textLength` et `textTruncated` sont identiques dans les deux cas.",
  "boundedFieldCases": [
   {
    "id": "f-text-plain",
@@ -926,11 +926,12 @@
     "value": "abc"
    },
    "text": "",
-   "intent": "Baseline for a control's working payload.",
+   "intent": "Baseline for a control's working payload. \u26d4 AND THE NEGATIVE HALF OF THE REDACTION: an ordinary field must stay READABLE. Without a case pinning `valueRedacted: false` on a value that is also asserted verbatim, a redaction that masked EVERY field would read as a perfect success \u2014 the guard and its own defeat have the same green.",
    "expect": {
     "valueEquals": "abc",
     "valueLength": 3,
-    "valueTruncated": false
+    "valueTruncated": false,
+    "valueRedacted": false
    },
    "status": "contract"
   },
@@ -985,10 +986,11 @@
     "href": "#f-value-absent"
    },
    "text": "lien sans value",
-   "intent": "An anchor has no `value` property at all. null must mean ABSENT, and stay distinct from the empty string above.",
+   "intent": "An anchor has no `value` property at all. null must mean ABSENT, and stay distinct from the empty string above. \u26d4 `valueRedacted: false` is what makes that distinction SURVIVE the redaction: a withheld secret reports `valueLength: null` too, so this case and f-value-secret-type are byte-identical on every other field. This one key is the whole difference between \u00ab there is nothing here \u00bb and \u00ab there is something here you are not being shown \u00bb.",
    "expect": {
     "valueLength": null,
-    "valueTruncated": null
+    "valueTruncated": null,
+    "valueRedacted": false
    },
    "status": "contract"
   },
@@ -1017,6 +1019,161 @@
    "expect": {
     "accessibleNameLength": 200,
     "accessibleNameTruncated": true
+   },
+   "status": "contract"
+  },
+  {
+   "id": "f-text-emoji-at-bound",
+   "tag": "button",
+   "attributes": {},
+   "text": "{{\\ud83d\\ude00*40}}",
+   "intent": "\u26d4 THE CASE THAT DECIDES WHAT `length` COUNTS, and the corpus had none. 40 emoji are 80 UTF-16 units, 40 code points and 160 UTF-8 bytes \u2014 three defensible answers, three different numbers. Every other bounded case is ASCII, where the three coincide, so three mutually incompatible implementations of the count passed this fixture identically (MEASURED 2026-08-16). Pinned AT the display bound so `truncated` is decided by the same unit: in code points 40 is under it, in bytes 160 is over it, and only UTF-16 units give 80/false.",
+   "expect": {
+    "textLength": 80,
+    "textTruncated": false,
+    "textShownLength": 80
+   },
+   "status": "contract"
+  },
+  {
+   "id": "f-text-emoji-cut",
+   "tag": "button",
+   "attributes": {},
+   "text": "{{\\ud83d\\ude00*100}}",
+   "intent": "\u26d4 THE CUT MUST COUNT WHAT `length` COUNTS \u2014 and `textLength` alone cannot see it. A cut made in CODE POINTS reports 200 and true here, exactly like a correct one, while handing back 160 units instead of 80: the display bound that justifies this whole cluster DOUBLES in silence, under a 64 KB transport ceiling. `textShownLength` is the only expectation in the file that watches the field itself rather than what the field says about itself. MEASURED 2026-08-16: this mutation survived the entire harness.",
+   "expect": {
+    "textLength": 200,
+    "textTruncated": true,
+    "textShownLength": 80
+   },
+   "status": "contract"
+  },
+  {
+   "id": "f-text-emoji-split",
+   "tag": "button",
+   "attributes": {},
+   "text": "x{{\\ud83d\\ude00*41}}",
+   "intent": "\u2694 THE DEFECT INDEPENDENT FALSIFICATION MEASURED on 2026-08-16: 'x' plus 41 emoji is 83 units, so the cut at unit 80 lands INSIDE a pair, orphans a high surrogate, and `sanitizeForTransport` turns it into U+FFFD \u2014 a character ABSENT FROM THE PAGE appears in the map, and a reader concludes the page holds invalid text where it holds a valid emoji. The contract broken is that `text` is a PREFIX of the measured text, and U+FFFD prefixes nothing. The step-back yields 79, the longest prefix that orphans nobody. 79 IS the whole assertion: 80 means the orphan is back. `textLength` and `textTruncated` stayed honest at 83/true throughout \u2014 they cannot see this, and that is why the derived key exists.",
+   "expect": {
+    "textLength": 83,
+    "textTruncated": true,
+    "textShownLength": 79
+   },
+   "status": "contract"
+  },
+  {
+   "id": "f-name-collapsed",
+   "tag": "button",
+   "attributes": {
+    "aria-label": "  a   b  "
+   },
+   "text": "f-name-collapsed",
+   "intent": "\u26d4 THE PENDANT OF f-text-collapsed FOR THE NAME FAMILY, and its absence left the most explicitly defended contract of the cluster \u2014 \u00ab length IS the length of the NORMALISED text, never of the raw DOM value, and that is load-bearing \u00bb \u2014 guarded by nothing. MEASURED 2026-08-16: a probe reporting the RAW length (9 here) passed the whole fixture, because the two existing name cases carry no redundant blank, so raw == normalised for both and neither can tell the two apart. The name is a handle: '  a   b  ' names 'a b', 3 long.",
+   "expect": {
+    "accessibleNameEquals": "a b",
+    "accessibleNameLength": 3,
+    "accessibleNameTruncated": false
+   },
+   "status": "contract"
+  },
+  {
+   "id": "f-value-secret-type",
+   "tag": "input",
+   "attributes": {
+    "type": "password",
+    "value": "hunter2-{{s*40}}"
+   },
+   "text": "",
+   "intent": "\u26d4 A MAP IS A PASSIVE SWEEP, AND NOBODY ASKED FOR THIS FIELD. MEASURED 2026-08-16: a canary page returned `type: \"password\"` beside its value in clear, which then lives in an agent's context, in a map.json on disk and in every transcript downstream. All THREE value fields must withhold \u2014 the length too, since a password's length is itself a secret \u2014 while `valueRedacted` says a value EXISTS. Nothing in the live harness watched this field until now: the fix shipped with no case able to see it regress.",
+   "expect": {
+    "valueEquals": null,
+    "valueLength": null,
+    "valueTruncated": null,
+    "valueRedacted": true
+   },
+   "status": "contract"
+  },
+  {
+   "id": "f-value-secret-otp",
+   "tag": "input",
+   "attributes": {
+    "type": "text",
+    "autocomplete": "one-time-code",
+    "value": "123456"
+   },
+   "text": "",
+   "intent": "The secret that hides behind `type=\"text\"`. A one-time code, a card number or a password-manager field is routinely a plain text input, so typing alone misses it and `autocomplete` is the only tell. Its vocabulary is normative and closed, which is what makes the token list justifiable rather than guessed.",
+   "expect": {
+    "valueEquals": null,
+    "valueLength": null,
+    "valueRedacted": true
+   },
+   "status": "contract"
+  },
+  {
+   "id": "f-value-secret-cc-exp",
+   "tag": "input",
+   "attributes": {
+    "type": "text",
+    "autocomplete": "cc-exp-month",
+    "value": "12"
+   },
+   "text": "",
+   "intent": "`cc-exp` is a PREFIX on purpose \u2014 it must cover `cc-exp-month` and `cc-exp-year` without naming them. A case on the prefix rule itself, because an exact-match token list would pass every other secret case and leak exactly these two.",
+   "expect": {
+    "valueEquals": null,
+    "valueRedacted": true
+   },
+   "status": "contract"
+  },
+  {
+   "id": "f-value-not-secret-name",
+   "tag": "input",
+   "attributes": {
+    "type": "text",
+    "name": "password",
+    "value": "lisible"
+   },
+   "text": "",
+   "intent": "\u2b50 THE DECLARED BOUNDARY OF THE REDACTION, pinned rather than assumed. `<input type=\"text\" name=\"password\">` is NOT redacted, deliberately: matching name/id substrings is a guess, `name=\"password-hint\"` and `name=\"password-strength-meter\"` are ordinary readable fields, and a flag that fires on a guess teaches callers to distrust it. This case is also the second negative witness \u2014 it is the closest thing to a secret that must still read back whole, so an over-eager redaction dies here rather than in production.",
+   "expect": {
+    "valueEquals": "lisible",
+    "valueLength": 7,
+    "valueTruncated": false,
+    "valueRedacted": false
+   },
+   "status": "contract"
+  },
+  {
+   "id": "f-name-title-over-placeholder",
+   "tag": "input",
+   "attributes": {
+    "type": "text",
+    "title": "TITRE-DU-CHAMP",
+    "placeholder": "TEXTE-INDICATIF-IGNORE"
+   },
+   "text": "",
+   "intent": "\u26d4 THE RESOLUTION ORDER, JUDGED LIVE FOR THE FIRST TIME. HTML-AAM \u00a74.1.1 puts the control's `title` BEFORE its `placeholder`, and the bridge did the inverse until 2026-08-16 \u2014 the most ordinary shape there is, a field with a tooltip and a hint. `accessibleNameFrom` is the assertion that matters: a case pinning only the NAME goes green the moment both attributes happen to carry the same string, and the contract itself tells consumers to read the source rather than assume it. The two attributes differ here so the winner is unambiguous.",
+   "expect": {
+    "accessibleNameEquals": "TITRE-DU-CHAMP",
+    "accessibleNameFromEquals": "title",
+    "accessibleNameLength": 14
+   },
+   "status": "contract"
+  },
+  {
+   "id": "f-name-placeholder-alone",
+   "tag": "input",
+   "attributes": {
+    "type": "text",
+    "placeholder": "TEXTE-INDICATIF"
+   },
+   "text": "",
+   "intent": "\u2b50 THE OTHER DIRECTION, and it is the half an order swap silently kills. Demoting `placeholder` below `title` must not DROP it: with no title, the placeholder still names the control. Without this case, an implementation that simply stopped reading `placeholder` would pass f-name-title-over-placeholder perfectly \u2014 the reordering and its own destruction have the same green.",
+   "expect": {
+    "accessibleNameEquals": "TEXTE-INDICATIF",
+    "accessibleNameFromEquals": "placeholder",
+    "accessibleNameLength": 15
    },
    "status": "contract"
   }

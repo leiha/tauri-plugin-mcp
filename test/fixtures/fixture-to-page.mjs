@@ -13,6 +13,11 @@
  * ⚠ Values are ASCII by construction: each one is the inside of a JSON string, so
  * a NBSP, a BOM or a lone surrogate appears as an escape and can be reviewed. Runs
  * of 20+ identical characters are folded as `{{c*N}}`, or the file is unreadable.
+ * The folded character may itself be a surrogate PAIR — written
+ * `{{\ud83d\ude00*40}}` in the fixture, so it stays ASCII on disk. Added with the
+ * hors-BMP bounded cases, whose whole point is that 40 emoji are 80 units, 40 code
+ * points and 160 bytes at once, and that an ASCII-only corpus cannot tell the three
+ * apart.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -34,9 +39,14 @@ const page = `<meta charset="utf-8">
   var fixture = JSON.parse(document.getElementById('fixture').textContent);
 
   // Decode: JSON string escapes first, then the {{c*N}} run tokens.
+  // ⛔ The repeated CHARACTER may be a surrogate PAIR, and the alternation has to come
+  // first because \`.\` matches a single UTF-16 unit — it would fold half an emoji and
+  // hand the page a text made of orphans, which is precisely the defect the hors-BMP
+  // cases exist to catch. Written out, 100 emoji cost 1200 characters of escapes in a
+  // fixture whose encoding rule exists to keep long runs readable.
   function decode(encoded) {
     var text = JSON.parse('"' + encoded + '"');
-    return text.replace(/\\{\\{(.)\\*(\\d+)\\}\\}/g, function (whole, character, count) {
+    return text.replace(/\\{\\{([\\uD800-\\uDBFF][\\uDC00-\\uDFFF]|.)\\*(\\d+)\\}\\}/g, function (whole, character, count) {
       return new Array(Number(count) + 1).join(character);
     });
   }
