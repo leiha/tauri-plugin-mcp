@@ -162,8 +162,64 @@ test('the W3C order holds, and it is what makes a composed selector correct', ()
     raw: 'the name',
   });
   assert.equal(accessibleName(element({ alt: 'x', placeholder: 'y', title: 'z' })).from, 'alt');
-  assert.equal(accessibleName(element({ placeholder: 'y', title: 'z' })).from, 'placeholder');
+
+  // ⚔ THIS ASSERTION USED TO EXPECT `placeholder`, AND THE TARGET WAS WRONG.
+  // HTML-AAM §4.1.1 falls back to `title` FIRST and only then to `placeholder`
+  // (https://www.w3.org/TR/html-aam-1.0/). The probe had the two inverted, and this
+  // test pinned the inversion — so the one thing that could have caught it was
+  // asserting it instead. Changed on 2026-08-16 after checking the published spec
+  // directly, not on the strength of the report that raised it.
+  // ⚠ The preference is contested upstream (w3c/html-aam#168, no ARIA WG consensus
+  // recorded), but the published spec is unambiguous and it is the one we claim.
+  assert.equal(accessibleName(element({ placeholder: 'y', title: 'z' })).from, 'title');
+
+  // Both directions, so the order is pinned rather than the winner: with no title,
+  // placeholder still names the control. Without this, a probe that ignored
+  // placeholder entirely would pass the assertion above.
+  assert.equal(accessibleName(element({ placeholder: 'y' })).from, 'placeholder');
   assert.equal(accessibleName(element({ title: 'z' })).from, 'title');
+});
+
+test('the DISPLAY bound never orphans a surrogate — a character absent from the page must not appear', () => {
+  const { boundedField, NAME_BOUND } = liftNaming()(NO_DOCUMENT);
+
+  // ⚔ THE DEFECT, OBSERVED 2026-08-16 by an independent attack. `'x' + 41 emoji` is
+  // 83 UTF-16 units, so the cut at 80 lands INSIDE the 40th pair. The orphaned high
+  // surrogate was then replaced by U+FFFD, and a reader saw "this page contains
+  // invalid text" about a perfectly valid emoji — plus a `value` that was not a
+  // prefix of anything, against the contract this field is sold on.
+  // ⭐ The selector path had been protected against exactly this since the day it was
+  // written (`prefixForSelector`); the display path, written later, never received
+  // the same guard. The repair is that port.
+  const text = `x${'😀'.repeat(41)}`;
+  assert.equal(text.length, 83, 'the witness must straddle the bound to test anything');
+
+  const bounded = boundedField(text, true);
+
+  assert.ok(!bounded.value.includes('�'), 'a replacement character leaked into the shown field');
+  assert.equal(bounded.value.length, NAME_BOUND - 1, 'the cut must step BACK one unit, not forward');
+  assert.ok(text.startsWith(bounded.value), 'the shown field must remain a real prefix');
+  // The honest fields stay honest: only the shown value was ever wrong.
+  assert.equal(bounded.length, 83);
+  assert.equal(bounded.truncated, true);
+});
+
+test('the DISPLAY bound still cuts at exactly 80 when nothing straddles it', () => {
+  // ⛔ THE NEGATIVE HALF, without which the test above proves nothing: a guard that
+  // always stepped back would satisfy it and silently shorten every bounded field by
+  // one character.
+  const { boundedField, NAME_BOUND } = liftNaming()(NO_DOCUMENT);
+
+  const plain = 'a'.repeat(200);
+  const bounded = boundedField(plain, true);
+
+  assert.equal(bounded.value.length, NAME_BOUND);
+  assert.equal(bounded.length, 200);
+  assert.equal(bounded.truncated, true);
+
+  // And a pair that ends exactly ON the bound is whole — it must NOT be stepped back.
+  const aligned = `${'😀'.repeat(40)}tail`;
+  assert.equal(boundedField(aligned, true).value.length, NAME_BOUND);
 });
 
 test('aria-labelledby wins, and says so — because it is the one that cannot compose', () => {

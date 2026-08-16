@@ -52,7 +52,7 @@
      * not a verdict.
      * ⚠ Maintained by `node test/fingerprint.mjs --write`; never edit by hand.
      */
-    var PROBE_FINGERPRINT = '1d63aa475d21';
+    var PROBE_FINGERPRINT = 'dd6980e001c7';
 
     var consoleLog = [];
     var networkLog = [];
@@ -377,12 +377,30 @@
      * element is, and uses `accessibleNameSelector` to REACH it — legibility and
      * exactness in two fields rather than one field failing at both.
      *
-     * ⚠ THIS IS THE W3C ORDER, NOT THE WHOLE ALGORITHM. accname resolves
-     * `aria-labelledby` > `aria-label` > native labelling > `title`, and that order
-     * is honoured here. What is NOT implemented: `<label for>` and wrapping-label
-     * lookup, id lists that mix in text nodes, and `aria-labelledby` chains. Said
-     * here rather than discovered — a null answer does not prove the element has no
-     * accessible name, only that these four attributes are empty.
+     * ⚠ THIS IS PART OF THE W3C ORDER, NOT THE WHOLE ALGORITHM. accname resolves
+     * `aria-labelledby` > `aria-label` > native labelling > content > `title`, and
+     * only the attribute steps are honoured here.
+     *
+     * ⛔ THE COMPLETE LIST OF WHAT IS NOT IMPLEMENTED — kept complete on purpose,
+     * because every gap missing from this list becomes a SILENT wrong answer rather
+     * than a known limit. Audited against HTML-AAM on 2026-08-16; the last four were
+     * absent from this list until then, and the first of them is the most common case
+     * on a real page:
+     *   · NAME FROM CONTENT (HTML-AAM §4.1.4, §4.1.13). `<button>Save</button>` and
+     *     `<a href="…">Details</a>` take their name from their SUBTREE, before
+     *     `title`. Here they report `title` if present, and `null` if not — so an
+     *     ordinary text button comes back unnamed. Closing this changes the reported
+     *     name on a great many real elements: it is a product decision, not a fix.
+     *   · SHADOW DOM. Elements inside a shadow root are not merely mis-named, they
+     *     are ABSENT from the map — which reads as "the page does not have one".
+     *   · EMBEDDED CONTROL (accname step 2C) — a control nested inside a labelling
+     *     element contributes its VALUE to the name; not implemented.
+     *   · `<label for>` and wrapping-label lookup, id lists that mix in text nodes,
+     *     and `aria-labelledby` chains.
+     *
+     * ⇒ Said here rather than discovered: a null answer does not prove the element
+     * has no accessible name, only that these attributes are empty. And an element
+     * missing from the map does not prove it is missing from the page.
      */
     /**
      * The bound that keeps a 200-element map readable. It is a real constraint —
@@ -503,13 +521,22 @@
      *   `accessibleName` `bounded()` DID compute the flag — and `describeElement`
      *                    never emitted it, so no reader of a map could see it.
      *
-     * ⛔ `length` IS THE LENGTH OF THE NORMALISED TEXT, never of the raw DOM value,
-     * and that is load-bearing. `length` exists so a reader can tell how much of the
-     * field is MISSING from `value`, and `value` is a prefix of the normalised form.
-     * Report the raw length instead and a merely re-spaced string ("  a   b  " →
-     * "a b") reads as truncated when nothing was cut — a new false positive traded
-     * for the false negative. Whitespace collapsing is a documented property of the
-     * field, not a per-element event.
+     * ⛔ `length` IS THE LENGTH OF THE TEXT THIS CALL ACTUALLY MEASURES — normalised
+     * when `normalise` is true, raw when it is false — and never a mix of the two.
+     * `length` exists so a reader can tell how much of the field is MISSING from
+     * `value`, so the two must describe the same string.
+     * ⚠ WHEN `normalise` IS TRUE (`text`, `accessibleName`) reporting the RAW length
+     * instead would make a merely re-spaced string ("  a   b  " → "a b") read as
+     * truncated when nothing was cut — a new false positive traded for the false
+     * negative. Whitespace collapsing is a documented property of those fields, not a
+     * per-element event.
+     * ⚔ WHEN `normalise` IS FALSE (`value`) the raw length is the RIGHT answer, and
+     * saying otherwise was a real defect: this comment used to state the normalised
+     * rule without qualification, and the published reference repeated it under a
+     * table that declared `value` un-normalised two lines above. That contradiction
+     * did not stay on paper — it was copied verbatim into a verification mandate on
+     * 2026-08-16 and sent someone hunting a code defect that did not exist. A value is
+     * a working payload, not a label: relaying it normalised would read as lost input.
      *
      * ⚠ THE BOUND IS NOT WIDENED, deliberately. No measurement justifies another
      * number — inventing one is what got a length floor on selector prefixes killed
@@ -520,9 +547,29 @@
     function boundedField(raw, normalise) {
         var text = String(raw);
         if (normalise) text = text.replace(/\s+/g, ' ').trim();
+        var shown = text.slice(0, NAME_BOUND);
+        // ⭐ THE BOUND CAN LAND INSIDE A SURROGATE PAIR — step back rather than orphan
+        // it. Cutting at unit 80 mid-pair leaves a lone high surrogate, which
+        // `sanitizeForTransport` then replaces with U+FFFD: a character that is NOT ON
+        // THE PAGE appears in the map, and a reader concludes "there is invalid text
+        // here" about a perfectly valid emoji. It also breaks the contract this field
+        // is sold on — `value` is a PREFIX of the measured text, and U+FFFD is not a
+        // prefix of anything.
+        // ⚠ OBSERVED 2026-08-16 by an independent attack, on `'x' + 41 emoji`
+        // (83 UTF-16 units): the shown field ended in U+FFFD while length/truncated
+        // stayed honest at 83/true. The lie was in the bounded field alone.
+        // ⛔ THE FIX IS A PORT, NOT AN INVENTION: `prefixForSelector` already does
+        // exactly this, three functions below. The SELECTOR path was protected the day
+        // it was written; the DISPLAY path, written after, never received it — the
+        // protection had been judged necessary once and was simply not carried over.
+        // Stepping back shortens the shown field to 79 units, which is correct: it is
+        // still a prefix, and `length`/`truncated` still say what was cut.
+        if (isHighSurrogate(shown.charCodeAt(shown.length - 1))) {
+            shown = shown.slice(0, shown.length - 1);
+        }
         return {
             // Sanitised: a lone surrogate here costs the WHOLE map, not this row.
-            value: sanitizeForTransport(text.slice(0, NAME_BOUND)),
+            value: sanitizeForTransport(shown),
             length: text.length,
             truncated: text.length > NAME_BOUND
         };
@@ -738,8 +785,25 @@
             var named = bounded(joined, 'aria-labelledby');
             if (named) return named;
         }
-        // W3C accname order, minus the native-label lookup this does not implement.
-        var order = ['aria-label', 'alt', 'placeholder', 'title'];
+        // ⭐ HTML-AAM ORDER — `title` BEFORE `placeholder`, and the two were inverted
+        // here until 2026-08-16. HTML-AAM §4.1.1 (input text/password/search/tel/url
+        // and textarea) falls back to the title attribute FIRST, and only then to
+        // placeholder: https://www.w3.org/TR/html-aam-1.0/
+        // ⚠ CHECKED AGAINST THE SPEC, NOT AGAINST A REPORT. An independent attack
+        // raised it; the order was then confirmed from the published mappings before
+        // touching anything, because this changes behaviour for every consumer of the
+        // bridge. The preference is contested upstream (w3c/html-aam#168 — no ARIA WG
+        // consensus recorded), but the published spec is unambiguous and it is the
+        // spec we claim to follow.
+        // ⛔ WHAT THIS ORDER STILL DOES NOT DO, stated so no reader mistakes it for
+        // the full algorithm: no native `<label for>` / wrapping-label lookup, and no
+        // "name from content" step — so `<button title="X">Y</button>` reports X here
+        // where HTML-AAM §4.1.4 requires Y, and `<a href>Text</a>` reports null where
+        // §4.1.13 requires the text. Those are declared gaps, not oversights; closing
+        // the content step changes the reported name on a great many real elements and
+        // is a product decision, not a bug fix. Read `accessibleNameFrom` rather than
+        // assuming the source.
+        var order = ['aria-label', 'alt', 'title', 'placeholder'];
         for (var j = 0; j < order.length; j++) {
             var raw = el.getAttribute(order[j]);
             if (!raw) continue;
