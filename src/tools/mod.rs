@@ -8,7 +8,19 @@ use crate::socket_server::SocketResponse;
 // Export command modules
 pub mod app_info;
 pub mod cookies;
-#[cfg(feature = "devtools")]
+// ⭐ THE GATE MATCHES TAURI'S OWN, and until 2026-08-19 it was STRICTER FOR NO REASON.
+// `Webview::{open,close,is}_devtools` are declared `#[cfg(any(debug_assertions, feature =
+// "devtools"))]` (tauri 2, `webview/mod.rs`). This module required the feature ALONE — so
+// in a debug build, where the methods exist and where this whole plugin lives anyway
+// (`#[cfg(debug_assertions)]` in every consumer), the command still answered «requires the
+// 'devtools' feature». ⇒ NINE consumer apps had no inspector, and each would have had to
+// opt in by hand.
+// 🔑 Why that mattered beyond convenience: `tauri/devtools` also turns the inspector on in
+// RELEASE builds. Asking nine apps to add it makes every one of them take a shipping
+// decision to obtain a DEV capability. Matching tauri's gate gives dev builds the command
+// for free and leaves release behaviour exactly as it was — the feature is still what a
+// release build must opt into.
+#[cfg(any(debug_assertions, feature = "devtools"))]
 pub mod devtools;
 pub mod events;
 pub mod execute_js;
@@ -29,7 +41,7 @@ pub mod restart_app;
 // Re-export command handler functions
 pub use app_info::handle_get_app_info;
 pub use cookies::handle_manage_cookies;
-#[cfg(feature = "devtools")]
+#[cfg(any(debug_assertions, feature = "devtools"))]
 pub use devtools::handle_manage_devtools;
 pub use events::handle_manage_events;
 pub use execute_js::handle_execute_js;
@@ -119,9 +131,9 @@ pub async fn handle_command<R: Runtime>(
         commands::NAVIGATE_WEBVIEW => handle_navigate_webview(app, payload).await,
         commands::MANAGE_EVENTS => handle_manage_events(app, payload).await,
         commands::MANAGE_COOKIES => handle_manage_cookies(app, payload).await,
-        #[cfg(feature = "devtools")]
+        #[cfg(any(debug_assertions, feature = "devtools"))]
         commands::MANAGE_DEVTOOLS => handle_manage_devtools(app, payload).await,
-        #[cfg(not(feature = "devtools"))]
+        #[cfg(not(any(debug_assertions, feature = "devtools")))]
         commands::MANAGE_DEVTOOLS => Ok(SocketResponse {
             success: false,
             data: None,

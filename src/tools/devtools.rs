@@ -1,7 +1,8 @@
 use serde::Deserialize;
 use serde_json::Value;
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{AppHandle, Runtime};
 
+use crate::desktop::get_webview_for_eval;
 use crate::socket_server::SocketResponse;
 
 #[derive(Debug, Deserialize)]
@@ -20,7 +21,20 @@ pub async fn handle_manage_devtools<R: Runtime>(
     })?;
 
     let window_label = parsed.window_label.unwrap_or_else(|| "main".to_string());
-    let ww = app.get_webview_window(&window_label).ok_or_else(|| {
+    // ⚠ **THE THIRD RESOLVER TO CARRY THIS DEFECT, and the last one left.** This handler
+    // used `get_webview_window` alone, so a label naming a CHILD webview — a lightbox tab,
+    // which is exactly the page a developer wants to inspect — answered `Window not found`.
+    // `get_webview_for_eval` and `get_emit_target` were both corrected on 2026-08-07 under
+    // a doc-comment that says «correcting one of two identical resolvers is how a fixed bug
+    // survives». There were three, not two.
+    // 🔑 It survived because the `devtools` feature was OFF in all nine consumer apps: the
+    // handler returned «requires the 'devtools' feature» before ever reaching this line, so
+    // no one could meet the defect. *A capability nobody can switch on is a capability whose
+    // bugs never get found.* Measured and fixed 2026-08-19.
+    // ⛔ Do NOT narrow this back to `get_webview_window`: `open_devtools`, `close_devtools`
+    // and `is_devtools_open` are all defined on `Webview` itself (tauri 2, webview/mod.rs),
+    // so nothing about the window type requires it.
+    let ww = get_webview_for_eval(app, &window_label).ok_or_else(|| {
         crate::error::Error::Anyhow(format!("Window not found: {}", window_label))
     })?;
 
